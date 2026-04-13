@@ -7,8 +7,11 @@ func (err DomainError) Error() string {
 }
 
 const (
-	ErrAccountNotFound      DomainError = "account not found"
-	ErrAccountAlreadyExists DomainError = "account already exists"
-	ErrForbidden            DomainError = "forbidden"
-	ErrInvalidCurrency      DomainError = "invalid currency"
+	ErrAccountNotFound              DomainError = "account not found"
+	ErrAccountAlreadyExists         DomainError = "account already exists"
+	ErrForbidden                    DomainError = "forbidden"
+	ErrInvalidCurrency              DomainError = "invalid currency"
+	ErrNegativeBalance              DomainError = "negative balance"
+	ErrNegativeReservedAmount       DomainError = "negative reserved amount"
+	ErrReservedAmountExceedsBalance DomainError = "reserved amount exceeds balance"
 )

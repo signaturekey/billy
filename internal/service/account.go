@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/signaturekey/billy/internal/domain/entity"
-	"github.com/signaturekey/billy/internal/domain/errors"
+	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
 )
 
 type AccountRepository interface {
@@ -25,7 +25,7 @@ func NewAccountService(repository AccountRepository) *accountService {
 func (service *accountService) Create(ctx context.Context, userID int64, currency string) (entity.Account, error) {
 	normalizedCurrency := normalizeCurrency(currency)
 	if !isValidCurrency(normalizedCurrency) {
-		return entity.Account{}, errors.ErrInvalidCurrency
+		return entity.Account{}, domainerrors.ErrInvalidCurrency
 	}
 
 	account := entity.Account{
@@ -55,7 +55,7 @@ func (service *accountService) GetByID(ctx context.Context, userID int64, accoun
 	}
 
 	if account.UserID != userID {
-		return entity.Account{}, errors.ErrForbidden
+		return entity.Account{}, domainerrors.ErrForbidden
 	}
 
 	if err := validateAccountAmounts(account.Balance, account.ReservedAmount); err != nil {
@@ -104,15 +104,15 @@ func isValidCurrency(currency string) bool {
 
 func validateAccountAmounts(balance int64, reservedAmount int64) error {
 	if balance < 0 {
-		return fmt.Errorf("account balance cannot be negative")
+		return fmt.Errorf("account balance cannot be negative: %w", domainerrors.ErrNegativeBalance)
 	}
 
 	if reservedAmount < 0 {
-		return fmt.Errorf("account reserved amount cannot be negative")
+		return fmt.Errorf("account reserved amount cannot be negative: %w", domainerrors.ErrNegativeReservedAmount)
 	}
 
 	if reservedAmount > balance {
-		return fmt.Errorf("account reserved amount cannot exceed balance")
+		return fmt.Errorf("account reserved amount cannot exceed balance: %w", domainerrors.ErrReservedAmountExceedsBalance)
 	}
 
 	return nil
