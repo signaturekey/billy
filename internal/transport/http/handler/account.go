@@ -34,13 +34,8 @@ func (handler *AccountHandler) Create(ctx *gin.Context) {
 		return
 	}
 
-	userID, ok := middleware.CurrentUserID(ctx)
-	if !ok {
-		response.Unauthorized(ctx, "unauthorized")
-		return
-	}
-
-	account, err := handler.service.Create(ctx.Request.Context(), userID, request.Currency)
+	id := middleware.CurrentUserID(ctx)
+	account, err := handler.service.Create(ctx.Request.Context(), id, request.Currency)
 	if err != nil {
 		transporterrors.WriteAccountError(ctx, err)
 		return
@@ -55,13 +50,8 @@ func (handler *AccountHandler) GetByID(ctx *gin.Context) {
 		return
 	}
 
-	userID, ok := middleware.CurrentUserID(ctx)
-	if !ok {
-		response.Unauthorized(ctx, "unauthorized")
-		return
-	}
-
-	account, err := handler.service.GetByID(ctx.Request.Context(), userID, accountID)
+	id := middleware.CurrentUserID(ctx)
+	account, err := handler.service.GetByID(ctx.Request.Context(), id, accountID)
 	if err != nil {
 		transporterrors.WriteAccountError(ctx, err)
 		return
@@ -76,13 +66,8 @@ func (handler *AccountHandler) GetBalance(ctx *gin.Context) {
 		return
 	}
 
-	userID, ok := middleware.CurrentUserID(ctx)
-	if !ok {
-		response.Unauthorized(ctx, "unauthorized")
-		return
-	}
-
-	balance, err := handler.service.GetBalance(ctx.Request.Context(), userID, accountID)
+	id := middleware.CurrentUserID(ctx)
+	balance, err := handler.service.GetBalance(ctx.Request.Context(), id, accountID)
 	if err != nil {
 		transporterrors.WriteAccountError(ctx, err)
 		return
@@ -97,7 +82,6 @@ func parseAccountID(ctx *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		response.BadRequest(ctx, "invalid account id")
-
 		return 0, false
 	}
 

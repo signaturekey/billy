@@ -35,16 +35,6 @@ func AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-func CurrentUserID(ctx *gin.Context) (int64, bool) {
-	value, exists := ctx.Get(currentUserIDKey)
-	if !exists {
-		return 0, false
-	}
-
-	id, ok := value.(int64)
-	if !ok {
-		return 0, false
-	}
-
-	return id, true
+func CurrentUserID(ctx *gin.Context) int64 {
+	return ctx.MustGet(currentUserIDKey).(int64)
 }
