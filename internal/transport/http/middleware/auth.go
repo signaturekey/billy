@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/signaturekey/billy/internal/transport/http/response"
@@ -15,7 +14,7 @@ const currentUserIDKey ctxKey = iota
 func AuthMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		header := ctx.GetHeader("X-User-ID")
-		if strings.TrimSpace(header) == "" {
+		if header == "" {
 			response.Unauthorized(ctx, "unauthorized")
 			ctx.Abort()
 
