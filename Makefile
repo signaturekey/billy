@@ -5,10 +5,11 @@ BINARY_DIR  := ./bin
 BINARY      := $(BINARY_DIR)/$(APP_NAME)
 MIGRATIONS  := ./migrations
 DB_URL      ?= postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSL_MODE)
+GOOSE       := goose -dir $(MIGRATIONS) postgres "$(DB_URL)"
 
 .PHONY: build run \
 				test test-verbose lint tidy vet \
-				migrate-up migrate-down migrate-reset migrate-status migrate-create \
+				migrate-create migrate-up migrate-down migrate-status migrate-redo migrate-reset \
 				docker-up docker-down docker-build
 
 # Build
@@ -39,20 +40,23 @@ vet:
 	go vet ./...
 
 # Database
+migrate-create:
+	@goose -dir $(MIGRATIONS) create -s $(name) sql
+
 migrate-up:
-	@goose -dir $(MIGRATIONS) postgres "$(DB_URL)" up
+	@$(GOOSE) up
 
 migrate-down:
-	@goose -dir $(MIGRATIONS) postgres "$(DB_URL)" down
-
-migrate-reset:
-	@goose -dir $(MIGRATIONS) postgres "$(DB_URL)" reset
+	@$(GOOSE) down
 
 migrate-status:
-	@goose -dir $(MIGRATIONS) postgres "$(DB_URL)" status
+	@$(GOOSE) status
 
-migrate-create:
-	@goose -dir $(MIGRATIONS) create $(name) sql
+migrate-redo:
+	@$(GOOSE) redo
+
+migrate-reset:
+	@$(GOOSE) reset
 
 # Docker
 docker-up:
