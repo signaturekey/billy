@@ -27,3 +27,19 @@ type AccountBalance struct {
 	AvailableAmount int64
 	Currency        string
 }
+
+type LedgerEntryType string
+
+const (
+	LedgerEntryTypeTopup LedgerEntryType = "topup"
+)
+
+type LedgerEntry struct {
+	ID           int64
+	AccountID    int64
+	Type         LedgerEntryType
+	Amount       int64
+	Currency     string
+	BalanceAfter int64
+	CreatedAt    time.Time
+}

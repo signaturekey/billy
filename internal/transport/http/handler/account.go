@@ -16,6 +16,7 @@ type AccountService interface {
 	Create(ctx context.Context, userID int64, currency string) (entity.Account, error)
 	GetByID(ctx context.Context, userID int64, accountID int64) (entity.Account, error)
 	GetBalance(ctx context.Context, userID int64, accountID int64) (entity.AccountBalance, error)
+	TopUp(ctx context.Context, userID int64, accountID int64, amount int64) (entity.LedgerEntry, error)
 }
 
 type AccountHandler struct {
@@ -74,6 +75,28 @@ func (handler *AccountHandler) GetBalance(ctx *gin.Context) {
 	}
 
 	response.OK(ctx, dto.NewBalanceResponse(balance))
+}
+
+func (handler *AccountHandler) TopUp(ctx *gin.Context) {
+	accountID, ok := parseAccountID(ctx)
+	if !ok {
+		return
+	}
+
+	var request dto.TopUpRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(ctx, "invalid request body")
+		return
+	}
+
+	id := middleware.CurrentUserID(ctx)
+	entry, err := handler.service.TopUp(ctx.Request.Context(), id, accountID, request.Amount)
+	if err != nil {
+		transporterrors.WriteAccountError(ctx, err)
+		return
+	}
+
+	response.Created(ctx, dto.NewLedgerEntryResponse(entry))
 }
 
 func parseAccountID(ctx *gin.Context) (int64, bool) {

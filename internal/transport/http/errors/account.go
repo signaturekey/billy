@@ -12,6 +12,8 @@ func WriteAccountError(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, domainerrors.ErrInvalidCurrency):
 		response.BadRequest(ctx, "invalid currency")
+	case errors.Is(err, domainerrors.ErrInvalidAmount):
+		response.BadRequest(ctx, "invalid amount")
 	case errors.Is(err, domainerrors.ErrAccountAlreadyExists):
 		response.Conflict(ctx, "account already exists")
 	case errors.Is(err, domainerrors.ErrAccountNotFound):

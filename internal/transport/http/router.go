@@ -29,6 +29,7 @@ func (r *Router) Mount() stdhttp.Handler {
 	v1.POST("/accounts", r.accountHandler.Create)
 	v1.GET("/accounts/:id", r.accountHandler.GetByID)
 	v1.GET("/accounts/:id/balance", r.accountHandler.GetBalance)
+	v1.POST("/accounts/:id/topups", r.accountHandler.TopUp)
 
 	return g
 }

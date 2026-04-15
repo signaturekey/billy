@@ -1,9 +1,17 @@
 package dto
 
-import "github.com/signaturekey/billy/internal/domain/entity"
+import (
+	"time"
+
+	"github.com/signaturekey/billy/internal/domain/entity"
+)
 
 type CreateAccountRequest struct {
 	Currency string `json:"currency"`
+}
+
+type TopUpRequest struct {
+	Amount int64 `json:"amount"`
 }
 
 type AccountResponse struct {
@@ -20,6 +28,16 @@ type BalanceResponse struct {
 	ReservedAmount  int64  `json:"reserved_amount"`
 	AvailableAmount int64  `json:"available_amount"`
 	Currency        string `json:"currency"`
+}
+
+type LedgerEntryResponse struct {
+	ID           int64                  `json:"id"`
+	AccountID    int64                  `json:"account_id"`
+	Type         entity.LedgerEntryType `json:"type"`
+	Amount       int64                  `json:"amount"`
+	Currency     string                 `json:"currency"`
+	BalanceAfter int64                  `json:"balance_after"`
+	CreatedAt    time.Time              `json:"created_at"`
 }
 
 func NewAccountResponse(account entity.Account) AccountResponse {
@@ -39,5 +57,17 @@ func NewBalanceResponse(balance entity.AccountBalance) BalanceResponse {
 		ReservedAmount:  balance.ReservedAmount,
 		AvailableAmount: balance.AvailableAmount,
 		Currency:        balance.Currency,
+	}
+}
+
+func NewLedgerEntryResponse(entry entity.LedgerEntry) LedgerEntryResponse {
+	return LedgerEntryResponse{
+		ID:           entry.ID,
+		AccountID:    entry.AccountID,
+		Type:         entry.Type,
+		Amount:       entry.Amount,
+		Currency:     entry.Currency,
+		BalanceAfter: entry.BalanceAfter,
+		CreatedAt:    entry.CreatedAt,
 	}
 }
