@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
+# CI
+.github
+.gitlab-ci.yml
+.golangci.yml
+Makefile
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Go build artifacts
+bin
+dist
+build
+out
+*.exe
+*.test
+*.out
+coverage.*
+cover.out
+vendor
+
+# Docs
+README.md
+CHANGELOG.md
+LICENSE
+docs
+*.md
+
+# Logs
+*.log
+
+# Temp
+tmp
+.tmp
