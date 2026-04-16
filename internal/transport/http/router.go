@@ -30,6 +30,7 @@ func (r *Router) Mount() stdhttp.Handler {
 	v1.GET("/accounts/:id", r.accountHandler.GetByID)
 	v1.GET("/accounts/:id/balance", r.accountHandler.GetBalance)
 	v1.POST("/accounts/:id/topups", r.accountHandler.TopUp)
+	v1.POST("/accounts/:id/withdrawals", r.accountHandler.Withdraw)
 
 	return g
 }

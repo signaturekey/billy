@@ -20,6 +20,8 @@ func WriteAccountError(ctx *gin.Context, err error) {
 		response.NotFound(ctx, "account not found")
 	case errors.Is(err, domainerrors.ErrForbidden):
 		response.Forbidden(ctx, "forbidden")
+	case errors.Is(err, domainerrors.ErrInsufficientFunds):
+		response.UnprocessableEntity(ctx, "insufficient funds")
 	default:
 		response.InternalError(ctx)
 	}

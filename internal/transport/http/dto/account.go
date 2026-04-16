@@ -14,6 +14,10 @@ type TopUpRequest struct {
 	Amount int64 `json:"amount"`
 }
 
+type WithdrawalRequest struct {
+	Amount int64 `json:"amount"`
+}
+
 type AccountResponse struct {
 	ID             int64                `json:"id"`
 	Currency       string               `json:"currency"`
@@ -31,13 +35,14 @@ type BalanceResponse struct {
 }
 
 type LedgerEntryResponse struct {
-	ID           int64                  `json:"id"`
-	AccountID    int64                  `json:"account_id"`
-	Type         entity.LedgerEntryType `json:"type"`
-	Amount       int64                  `json:"amount"`
-	Currency     string                 `json:"currency"`
-	BalanceAfter int64                  `json:"balance_after"`
-	CreatedAt    time.Time              `json:"created_at"`
+	ID            int64                  `json:"id"`
+	AccountID     int64                  `json:"account_id"`
+	Type          entity.LedgerEntryType `json:"type"`
+	Amount        int64                  `json:"amount"`
+	Currency      string                 `json:"currency"`
+	BalanceBefore int64                  `json:"balance_before"`
+	BalanceAfter  int64                  `json:"balance_after"`
+	CreatedAt     time.Time              `json:"created_at"`
 }
 
 func NewAccountResponse(account entity.Account) AccountResponse {
@@ -62,12 +67,13 @@ func NewBalanceResponse(balance entity.AccountBalance) BalanceResponse {
 
 func NewLedgerEntryResponse(entry entity.LedgerEntry) LedgerEntryResponse {
 	return LedgerEntryResponse{
-		ID:           entry.ID,
-		AccountID:    entry.AccountID,
-		Type:         entry.Type,
-		Amount:       entry.Amount,
-		Currency:     entry.Currency,
-		BalanceAfter: entry.BalanceAfter,
-		CreatedAt:    entry.CreatedAt,
+		ID:            entry.ID,
+		AccountID:     entry.AccountID,
+		Type:          entry.Type,
+		Amount:        entry.Amount,
+		Currency:      entry.Currency,
+		BalanceBefore: entry.BalanceBefore,
+		BalanceAfter:  entry.BalanceAfter,
+		CreatedAt:     entry.CreatedAt,
 	}
 }

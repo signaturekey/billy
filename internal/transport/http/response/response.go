@@ -46,6 +46,10 @@ func Conflict(ctx *gin.Context, message string) {
 	Error(ctx, http.StatusConflict, message)
 }
 
+func UnprocessableEntity(ctx *gin.Context, message string) {
+	Error(ctx, http.StatusUnprocessableEntity, message)
+}
+
 func InternalError(ctx *gin.Context) {
 	Error(ctx, http.StatusInternalServerError, "internal server error")
 }

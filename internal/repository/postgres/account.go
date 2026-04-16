@@ -118,12 +118,18 @@ func (repo *accountRepository) TopUp(ctx context.Context, accountID int64, amoun
 		WHERE id = $1
 		RETURNING
 			currency,
+			balance - $2,
 			balance
 	`
 
 	var currency string
+	var balanceBefore int64
 	var balanceAfter int64
-	if err := tx.QueryRow(ctx, updateAccountQuery, accountID, amount).Scan(&currency, &balanceAfter); err != nil {
+	if err := tx.QueryRow(ctx, updateAccountQuery, accountID, amount).Scan(
+		&currency,
+		&balanceBefore,
+		&balanceAfter,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return entity.LedgerEntry{}, domainerrors.ErrAccountNotFound
 		}
@@ -136,15 +142,17 @@ func (repo *accountRepository) TopUp(ctx context.Context, accountID int64, amoun
 			type,
 			amount,
 			currency,
+			balance_before,
 			balance_after
 		)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING
 			id,
 			account_id,
 			type,
 			amount,
 			currency,
+			balance_before,
 			balance_after,
 			created_at
 	`
@@ -156,6 +164,7 @@ func (repo *accountRepository) TopUp(ctx context.Context, accountID int64, amoun
 		entity.LedgerEntryTypeTopup,
 		amount,
 		currency,
+		balanceBefore,
 		balanceAfter,
 	)
 	if err != nil {
@@ -170,6 +179,105 @@ func (repo *accountRepository) TopUp(ctx context.Context, accountID int64, amoun
 
 	if err := tx.Commit(ctx); err != nil {
 		return entity.LedgerEntry{}, fmt.Errorf("commit topup transaction: %w", err)
+	}
+
+	return entry, nil
+}
+
+func (repo *accountRepository) Withdraw(ctx context.Context, accountID int64, amount int64) (entity.LedgerEntry, error) {
+	tx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		return entity.LedgerEntry{}, fmt.Errorf("begin withdrawal transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	const selectAccountQuery = `
+		SELECT
+			currency,
+			balance,
+			reserved_amount
+		FROM accounts
+		WHERE id = $1
+		FOR UPDATE
+	`
+
+	var currency string
+	var balanceBefore int64
+	var reservedAmount int64
+	if err := tx.QueryRow(ctx, selectAccountQuery, accountID).Scan(
+		&currency,
+		&balanceBefore,
+		&reservedAmount,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return entity.LedgerEntry{}, domainerrors.ErrAccountNotFound
+		}
+		return entity.LedgerEntry{}, fmt.Errorf("select account for withdrawal: %w", err)
+	}
+
+	if balanceBefore-reservedAmount < amount {
+		return entity.LedgerEntry{}, domainerrors.ErrInsufficientFunds
+	}
+
+	balanceAfter := balanceBefore - amount
+
+	const updateAccountQuery = `
+		UPDATE accounts
+		SET
+			balance = $2,
+			updated_at = now()
+		WHERE id = $1
+	`
+
+	if _, err := tx.Exec(ctx, updateAccountQuery, accountID, balanceAfter); err != nil {
+		return entity.LedgerEntry{}, fmt.Errorf("update account balance: %w", err)
+	}
+
+	const insertLedgerEntryQuery = `
+		INSERT INTO ledger_entries (
+			account_id,
+			type,
+			amount,
+			currency,
+			balance_before,
+			balance_after
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING
+			id,
+			account_id,
+			type,
+			amount,
+			currency,
+			balance_before,
+			balance_after,
+			created_at
+	`
+
+	rows, err := tx.Query(
+		ctx,
+		insertLedgerEntryQuery,
+		accountID,
+		entity.LedgerEntryTypeWithdrawal,
+		amount,
+		currency,
+		balanceBefore,
+		balanceAfter,
+	)
+	if err != nil {
+		return entity.LedgerEntry{}, fmt.Errorf("insert ledger entry: %w", err)
+	}
+	defer rows.Close()
+
+	entry, err := pgx.CollectOneRow(rows, pgx.RowToStructByName[entity.LedgerEntry])
+	if err != nil {
+		return entity.LedgerEntry{}, fmt.Errorf("collect inserted ledger entry: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return entity.LedgerEntry{}, fmt.Errorf("commit withdrawal transaction: %w", err)
 	}
 
 	return entry, nil

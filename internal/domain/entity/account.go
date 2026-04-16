@@ -31,15 +31,17 @@ type AccountBalance struct {
 type LedgerEntryType string
 
 const (
-	LedgerEntryTypeTopup LedgerEntryType = "topup"
+	LedgerEntryTypeTopup      LedgerEntryType = "topup"
+	LedgerEntryTypeWithdrawal LedgerEntryType = "withdrawal"
 )
 
 type LedgerEntry struct {
-	ID           int64
-	AccountID    int64
-	Type         LedgerEntryType
-	Amount       int64
-	Currency     string
-	BalanceAfter int64
-	CreatedAt    time.Time
+	ID            int64
+	AccountID     int64
+	Type          LedgerEntryType
+	Amount        int64
+	Currency      string
+	BalanceBefore int64
+	BalanceAfter  int64
+	CreatedAt     time.Time
 }
