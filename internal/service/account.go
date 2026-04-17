@@ -14,6 +14,7 @@ type AccountRepository interface {
 	GetByID(ctx context.Context, id int64) (entity.Account, error)
 	TopUp(ctx context.Context, accountID int64, amount int64) (entity.LedgerEntry, error)
 	Withdraw(ctx context.Context, accountID int64, amount int64) (entity.LedgerEntry, error)
+	ListOperations(ctx context.Context, accountID int64, limit int, offset int) ([]entity.LedgerEntry, error)
 }
 
 type accountService struct {
@@ -118,6 +119,20 @@ func (service *accountService) Withdraw(
 	}
 
 	return service.repository.Withdraw(ctx, accountID, amount)
+}
+
+func (service *accountService) ListOperations(
+	ctx context.Context,
+	userID int64,
+	accountID int64,
+	limit int,
+	offset int,
+) ([]entity.LedgerEntry, error) {
+	if _, err := service.GetByID(ctx, userID, accountID); err != nil {
+		return nil, err
+	}
+
+	return service.repository.ListOperations(ctx, accountID, limit, offset)
 }
 
 func normalizeCurrency(currency string) string {

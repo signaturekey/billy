@@ -45,6 +45,10 @@ type LedgerEntryResponse struct {
 	CreatedAt     time.Time              `json:"created_at"`
 }
 
+type OperationsResponse struct {
+	Items []LedgerEntryResponse `json:"items"`
+}
+
 func NewAccountResponse(account entity.Account) AccountResponse {
 	return AccountResponse{
 		ID:             account.ID,
@@ -76,4 +80,13 @@ func NewLedgerEntryResponse(entry entity.LedgerEntry) LedgerEntryResponse {
 		BalanceAfter:  entry.BalanceAfter,
 		CreatedAt:     entry.CreatedAt,
 	}
+}
+
+func NewOperationsResponse(entries []entity.LedgerEntry) OperationsResponse {
+	items := make([]LedgerEntryResponse, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, NewLedgerEntryResponse(entry))
+	}
+
+	return OperationsResponse{Items: items}
 }

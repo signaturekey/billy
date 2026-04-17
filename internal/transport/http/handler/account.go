@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/signaturekey/billy/internal/domain/entity"
+	"github.com/signaturekey/billy/internal/pkg/pagination"
 	"github.com/signaturekey/billy/internal/transport/http/dto"
 	transporterrors "github.com/signaturekey/billy/internal/transport/http/errors"
 	"github.com/signaturekey/billy/internal/transport/http/middleware"
@@ -18,6 +19,13 @@ type AccountService interface {
 	GetBalance(ctx context.Context, userID int64, accountID int64) (entity.AccountBalance, error)
 	TopUp(ctx context.Context, userID int64, accountID int64, amount int64) (entity.LedgerEntry, error)
 	Withdraw(ctx context.Context, userID int64, accountID int64, amount int64) (entity.LedgerEntry, error)
+	ListOperations(
+		ctx context.Context,
+		userID int64,
+		accountID int64,
+		limit int,
+		offset int,
+	) ([]entity.LedgerEntry, error)
 }
 
 type AccountHandler struct {
@@ -120,6 +128,30 @@ func (handler *AccountHandler) Withdraw(ctx *gin.Context) {
 	}
 
 	response.Created(ctx, dto.NewLedgerEntryResponse(entry))
+}
+
+func (handler *AccountHandler) ListOperations(ctx *gin.Context) {
+	accountID, ok := parseAccountID(ctx)
+	if !ok {
+		return
+	}
+
+	paginationParams := pagination.FromContext(ctx)
+
+	id := middleware.CurrentUserID(ctx)
+	entries, err := handler.service.ListOperations(
+		ctx.Request.Context(),
+		id,
+		accountID,
+		paginationParams.Limit,
+		paginationParams.Offset,
+	)
+	if err != nil {
+		transporterrors.WriteAccountError(ctx, err)
+		return
+	}
+
+	response.OK(ctx, dto.NewOperationsResponse(entries))
 }
 
 func parseAccountID(ctx *gin.Context) (int64, bool) {

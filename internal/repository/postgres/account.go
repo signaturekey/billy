@@ -282,3 +282,39 @@ func (repo *accountRepository) Withdraw(ctx context.Context, accountID int64, am
 
 	return entry, nil
 }
+
+func (repo *accountRepository) ListOperations(
+	ctx context.Context,
+	accountID int64,
+	limit int,
+	offset int,
+) ([]entity.LedgerEntry, error) {
+	const query = `
+		SELECT
+			id,
+			account_id,
+			type,
+			amount,
+			currency,
+			balance_before,
+			balance_after,
+			created_at
+		FROM ledger_entries
+		WHERE account_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, accountID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("query account operations: %w", err)
+	}
+	defer rows.Close()
+
+	entries, err := pgx.CollectRows(rows, pgx.RowToStructByName[entity.LedgerEntry])
+	if err != nil {
+		return nil, fmt.Errorf("collect account operations: %w", err)
+	}
+
+	return entries, nil
+}
