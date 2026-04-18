@@ -72,10 +72,16 @@ func main() {
 }
 
 func buildHTTPHandler(db *pgxpool.Pool) http.Handler {
+	txManager := postgres.NewTxManager(db)
 	accountRepository := postgres.NewAccountRepository(db)
-	accountService := service.NewAccountService(accountRepository)
+	ledgerRepository := postgres.NewLedgerRepository(db)
+	accountService := service.NewAccountService(txManager, accountRepository, ledgerRepository)
 	accountHandler := handler.NewAccountHandler(accountService)
 
-	r := transporthttp.NewRouter(accountHandler)
+	transferRepository := postgres.NewTransferRepository()
+	transferService := service.NewTransferService(txManager, accountRepository, transferRepository, ledgerRepository)
+	transferHandler := handler.NewTransferHandler(transferService)
+
+	r := transporthttp.NewRouter(accountHandler, transferHandler)
 	return r.Mount()
 }

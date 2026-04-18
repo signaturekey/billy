@@ -9,11 +9,15 @@ import (
 )
 
 type Router struct {
-	accountHandler *handler.AccountHandler
+	accountHandler  *handler.AccountHandler
+	transferHandler *handler.TransferHandler
 }
 
-func NewRouter(accountHandler *handler.AccountHandler) *Router {
-	return &Router{accountHandler: accountHandler}
+func NewRouter(accountHandler *handler.AccountHandler, transferHandler *handler.TransferHandler) *Router {
+	return &Router{
+		accountHandler:  accountHandler,
+		transferHandler: transferHandler,
+	}
 }
 
 func (r *Router) Mount() stdhttp.Handler {
@@ -32,6 +36,7 @@ func (r *Router) Mount() stdhttp.Handler {
 	v1.GET("/accounts/:id/operations", r.accountHandler.ListOperations)
 	v1.POST("/accounts/:id/topups", r.accountHandler.TopUp)
 	v1.POST("/accounts/:id/withdrawals", r.accountHandler.Withdraw)
+	v1.POST("/transfers", r.transferHandler.Create)
 
 	return g
 }

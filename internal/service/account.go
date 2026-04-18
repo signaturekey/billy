@@ -5,24 +5,44 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/signaturekey/billy/internal/domain/entity"
 	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
 )
 
+type TxManager interface {
+	WithTx(ctx context.Context, fn func(context.Context, pgx.Tx) error) error
+}
+
 type AccountRepository interface {
 	Create(ctx context.Context, account entity.Account) (entity.Account, error)
 	GetByID(ctx context.Context, id int64) (entity.Account, error)
-	TopUp(ctx context.Context, accountID int64, amount int64) (entity.LedgerEntry, error)
-	Withdraw(ctx context.Context, accountID int64, amount int64) (entity.LedgerEntry, error)
-	ListOperations(ctx context.Context, accountID int64, limit int, offset int) ([]entity.LedgerEntry, error)
+	GetForUpdate(ctx context.Context, tx pgx.Tx, id int64) (entity.Account, error)
+	UpdateBalance(ctx context.Context, tx pgx.Tx, accountID int64, balance int64) error
+}
+
+type LedgerRepository interface {
+	Create(ctx context.Context, tx pgx.Tx, entry entity.LedgerEntry) (entity.LedgerEntry, error)
+	ListByAccount(ctx context.Context, accountID int64, limit int, offset int) ([]entity.LedgerEntry, error)
 }
 
 type accountService struct {
-	repository AccountRepository
+	txManager  TxManager
+	accounts   AccountRepository
+	operations LedgerRepository
 }
 
-func NewAccountService(repository AccountRepository) *accountService {
-	return &accountService{repository: repository}
+func NewAccountService(
+	txManager TxManager,
+	accounts AccountRepository,
+	operations LedgerRepository,
+) *accountService {
+	return &accountService{
+		txManager:  txManager,
+		accounts:   accounts,
+		operations: operations,
+	}
 }
 
 func (service *accountService) Create(ctx context.Context, userID int64, currency string) (entity.Account, error) {
@@ -39,7 +59,7 @@ func (service *accountService) Create(ctx context.Context, userID int64, currenc
 		Status:         entity.AccountStatusActive,
 	}
 
-	createdAccount, err := service.repository.Create(ctx, account)
+	createdAccount, err := service.accounts.Create(ctx, account)
 	if err != nil {
 		return entity.Account{}, err
 	}
@@ -52,7 +72,7 @@ func (service *accountService) Create(ctx context.Context, userID int64, currenc
 }
 
 func (service *accountService) GetByID(ctx context.Context, userID int64, accountID int64) (entity.Account, error) {
-	account, err := service.repository.GetByID(ctx, accountID)
+	account, err := service.accounts.GetByID(ctx, accountID)
 	if err != nil {
 		return entity.Account{}, err
 	}
@@ -97,11 +117,43 @@ func (service *accountService) TopUp(
 		return entity.LedgerEntry{}, domainerrors.ErrInvalidAmount
 	}
 
-	if _, err := service.GetByID(ctx, userID, accountID); err != nil {
+	var entry entity.LedgerEntry
+	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		account, err := service.accounts.GetForUpdate(ctx, tx, accountID)
+		if err != nil {
+			return err
+		}
+
+		if account.UserID != userID {
+			return domainerrors.ErrForbidden
+		}
+
+		if err := validateAccountAmounts(account.Balance, account.ReservedAmount); err != nil {
+			return err
+		}
+
+		balanceBefore := account.Balance
+		balanceAfter := balanceBefore + amount
+
+		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, balanceAfter); err != nil {
+			return err
+		}
+
+		entry, err = service.operations.Create(ctx, tx, entity.LedgerEntry{
+			AccountID:     account.ID,
+			Type:          entity.LedgerEntryTypeTopup,
+			Amount:        amount,
+			Currency:      account.Currency,
+			BalanceBefore: balanceBefore,
+			BalanceAfter:  balanceAfter,
+		})
+		return err
+	})
+	if err != nil {
 		return entity.LedgerEntry{}, err
 	}
 
-	return service.repository.TopUp(ctx, accountID, amount)
+	return entry, nil
 }
 
 func (service *accountService) Withdraw(
@@ -114,11 +166,47 @@ func (service *accountService) Withdraw(
 		return entity.LedgerEntry{}, domainerrors.ErrInvalidAmount
 	}
 
-	if _, err := service.GetByID(ctx, userID, accountID); err != nil {
+	var entry entity.LedgerEntry
+	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		account, err := service.accounts.GetForUpdate(ctx, tx, accountID)
+		if err != nil {
+			return err
+		}
+
+		if account.UserID != userID {
+			return domainerrors.ErrForbidden
+		}
+
+		if err := validateAccountAmounts(account.Balance, account.ReservedAmount); err != nil {
+			return err
+		}
+
+		if account.Balance-account.ReservedAmount < amount {
+			return domainerrors.ErrInsufficientFunds
+		}
+
+		balanceBefore := account.Balance
+		balanceAfter := balanceBefore - amount
+
+		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, balanceAfter); err != nil {
+			return err
+		}
+
+		entry, err = service.operations.Create(ctx, tx, entity.LedgerEntry{
+			AccountID:     account.ID,
+			Type:          entity.LedgerEntryTypeWithdrawal,
+			Amount:        amount,
+			Currency:      account.Currency,
+			BalanceBefore: balanceBefore,
+			BalanceAfter:  balanceAfter,
+		})
+		return err
+	})
+	if err != nil {
 		return entity.LedgerEntry{}, err
 	}
 
-	return service.repository.Withdraw(ctx, accountID, amount)
+	return entry, nil
 }
 
 func (service *accountService) ListOperations(
@@ -132,7 +220,7 @@ func (service *accountService) ListOperations(
 		return nil, err
 	}
 
-	return service.repository.ListOperations(ctx, accountID, limit, offset)
+	return service.operations.ListByAccount(ctx, accountID, limit, offset)
 }
 
 func normalizeCurrency(currency string) string {
