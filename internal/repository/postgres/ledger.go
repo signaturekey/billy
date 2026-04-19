@@ -102,6 +102,8 @@ func (repo *ledgerRepository) ListByAccount(
 			currency,
 			balance_before,
 			balance_after,
+			COALESCE(reference_type, '') AS reference_type,
+			COALESCE(reference_id, 0) AS reference_id,
 			created_at
 		FROM ledger_entries
 		WHERE account_id = $1
