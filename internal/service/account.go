@@ -132,10 +132,10 @@ func (service *accountService) TopUp(
 			return err
 		}
 
-		balanceBefore := account.Balance
-		balanceAfter := balanceBefore + amount
+		before := account.Balance
+		after := before + amount
 
-		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, balanceAfter); err != nil {
+		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, after); err != nil {
 			return err
 		}
 
@@ -144,8 +144,8 @@ func (service *accountService) TopUp(
 			Type:          entity.LedgerEntryTypeTopup,
 			Amount:        amount,
 			Currency:      account.Currency,
-			BalanceBefore: balanceBefore,
-			BalanceAfter:  balanceAfter,
+			BalanceBefore: before,
+			BalanceAfter:  after,
 		})
 		return err
 	})
@@ -185,10 +185,10 @@ func (service *accountService) Withdraw(
 			return domainerrors.ErrInsufficientFunds
 		}
 
-		balanceBefore := account.Balance
-		balanceAfter := balanceBefore - amount
+		before := account.Balance
+		after := before - amount
 
-		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, balanceAfter); err != nil {
+		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, after); err != nil {
 			return err
 		}
 
@@ -197,8 +197,8 @@ func (service *accountService) Withdraw(
 			Type:          entity.LedgerEntryTypeWithdrawal,
 			Amount:        amount,
 			Currency:      account.Currency,
-			BalanceBefore: balanceBefore,
-			BalanceAfter:  balanceAfter,
+			BalanceBefore: before,
+			BalanceAfter:  after,
 		})
 		return err
 	})
