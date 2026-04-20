@@ -13,9 +13,10 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Env     string `env:"APP_ENV" env-default:"development"`
-	Port    string `env:"APP_PORT" env-default:"8080"`
-	BaseURL string `env:"APP_BASE_URL" env-default:"http://localhost:8080"`
+	Env     string        `env:"APP_ENV" env-default:"development"`
+	Port    string        `env:"APP_PORT" env-default:"8080"`
+	BaseURL string        `env:"APP_BASE_URL" env-default:"http://localhost:8080"`
+	HoldTTL time.Duration `env:"HOLD_TTL" env-default:"15m"`
 }
 
 type DatabaseConfig struct {

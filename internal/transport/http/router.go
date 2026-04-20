@@ -11,12 +11,18 @@ import (
 type Router struct {
 	accountHandler  *handler.AccountHandler
 	transferHandler *handler.TransferHandler
+	holdHandler     *handler.HoldHandler
 }
 
-func NewRouter(accountHandler *handler.AccountHandler, transferHandler *handler.TransferHandler) *Router {
+func NewRouter(
+	accountHandler *handler.AccountHandler,
+	transferHandler *handler.TransferHandler,
+	holdHandler *handler.HoldHandler,
+) *Router {
 	return &Router{
 		accountHandler:  accountHandler,
 		transferHandler: transferHandler,
+		holdHandler:     holdHandler,
 	}
 }
 
@@ -37,6 +43,9 @@ func (r *Router) Mount() stdhttp.Handler {
 	v1.POST("/accounts/:id/topups", r.accountHandler.TopUp)
 	v1.POST("/accounts/:id/withdrawals", r.accountHandler.Withdraw)
 	v1.POST("/transfers", r.transferHandler.Create)
+	v1.POST("/holds", r.holdHandler.Create)
+	v1.POST("/holds/:id/confirm", r.holdHandler.Confirm)
+	v1.POST("/holds/:id/cancel", r.holdHandler.Cancel)
 
 	return g
 }

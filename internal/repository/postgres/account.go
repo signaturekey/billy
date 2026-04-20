@@ -149,3 +149,26 @@ func (repo *accountRepository) UpdateBalance(ctx context.Context, tx pgx.Tx, acc
 
 	return nil
 }
+
+func (repo *accountRepository) UpdateAmounts(
+	ctx context.Context,
+	tx pgx.Tx,
+	accountID int64,
+	balance int64,
+	reservedAmount int64,
+) error {
+	const query = `
+		UPDATE accounts
+		SET
+			balance = $2,
+			reserved_amount = $3,
+			updated_at = now()
+		WHERE id = $1
+	`
+
+	if _, err := tx.Exec(ctx, query, accountID, balance, reservedAmount); err != nil {
+		return fmt.Errorf("update account amounts: %w", err)
+	}
+
+	return nil
+}

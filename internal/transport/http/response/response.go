@@ -46,6 +46,10 @@ func Conflict(ctx *gin.Context, message string) {
 	Error(ctx, http.StatusConflict, message)
 }
 
+func Gone(ctx *gin.Context, message string) {
+	Error(ctx, http.StatusGone, message)
+}
+
 func UnprocessableEntity(ctx *gin.Context, message string) {
 	Error(ctx, http.StatusUnprocessableEntity, message)
 }

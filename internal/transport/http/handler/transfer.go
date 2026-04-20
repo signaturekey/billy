@@ -45,7 +45,7 @@ func (handler *TransferHandler) Create(ctx *gin.Context) {
 		request.Amount,
 	)
 	if err != nil {
-		transporterrors.WriteAccountError(ctx, err)
+		transporterrors.WriteTransferError(ctx, err)
 		return
 	}
 

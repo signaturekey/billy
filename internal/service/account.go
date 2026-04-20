@@ -20,6 +20,7 @@ type AccountRepository interface {
 	GetByID(ctx context.Context, id int64) (entity.Account, error)
 	GetForUpdate(ctx context.Context, tx pgx.Tx, id int64) (entity.Account, error)
 	UpdateBalance(ctx context.Context, tx pgx.Tx, accountID int64, balance int64) error
+	UpdateAmounts(ctx context.Context, tx pgx.Tx, accountID int64, balance int64, reservedAmount int64) error
 }
 
 type LedgerRepository interface {

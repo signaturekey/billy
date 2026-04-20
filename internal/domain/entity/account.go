@@ -35,6 +35,7 @@ const (
 	LedgerEntryTypeWithdrawal  LedgerEntryType = "withdrawal"
 	LedgerEntryTypeTransferIn  LedgerEntryType = "transfer_in"
 	LedgerEntryTypeTransferOut LedgerEntryType = "transfer_out"
+	LedgerEntryTypeHoldConfirm LedgerEntryType = "hold_confirmed"
 )
 
 type LedgerEntry struct {

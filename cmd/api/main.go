@@ -38,7 +38,7 @@ func main() {
 	}
 	defer db.Close()
 
-	h := buildHTTPHandler(db)
+	h := buildHTTPHandler(db, cfg.App.HoldTTL)
 
 	addr := ":" + cfg.App.Port
 	srv := &http.Server{
@@ -71,7 +71,7 @@ func main() {
 	log.Info("server stopped")
 }
 
-func buildHTTPHandler(db *pgxpool.Pool) http.Handler {
+func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration) http.Handler {
 	txManager := postgres.NewTxManager(db)
 	accountRepository := postgres.NewAccountRepository(db)
 	ledgerRepository := postgres.NewLedgerRepository(db)
@@ -82,6 +82,16 @@ func buildHTTPHandler(db *pgxpool.Pool) http.Handler {
 	transferService := service.NewTransferService(txManager, accountRepository, transferRepository, ledgerRepository)
 	transferHandler := handler.NewTransferHandler(transferService)
 
-	r := transporthttp.NewRouter(accountHandler, transferHandler)
+	holdRepository := postgres.NewHoldRepository()
+	holdService := service.NewHoldService(
+		txManager,
+		accountRepository,
+		holdRepository,
+		ledgerRepository,
+		ttl,
+	)
+	holdHandler := handler.NewHoldHandler(holdService)
+
+	r := transporthttp.NewRouter(accountHandler, transferHandler, holdHandler)
 	return r.Mount()
 }
