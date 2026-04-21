@@ -47,7 +47,7 @@ func main() {
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h, holdExpirer := buildHTTPHandler(db, cfg.App.HoldTTL)
+	h, holdExpirer := buildHTTPHandler(db, cfg.App.HoldTTL, log)
 	holdExpirationWorker := worker.NewHoldExpirationWorker(
 		holdExpirer,
 		holdExpirationInterval,
@@ -86,7 +86,7 @@ func main() {
 	log.Info("server stopped")
 }
 
-func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration) (http.Handler, worker.HoldExpirer) {
+func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration, log *zap.Logger) (http.Handler, worker.HoldExpirer) {
 	txManager := postgres.NewTxManager(db)
 	idempotencyRepository := postgres.NewIdempotencyRepository()
 	idempotencyExecutor := service.NewIdempotencyExecutor(txManager, idempotencyRepository, 0)
@@ -110,6 +110,11 @@ func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration) (http.Handler, worker
 	)
 	holdHandler := handler.NewHoldHandler(holdService, idempotencyExecutor)
 
-	r := transporthttp.NewRouter(accountHandler, transferHandler, holdHandler)
+	r := transporthttp.NewRouter(
+		accountHandler,
+		transferHandler,
+		holdHandler,
+		log,
+	)
 	return r.Mount(), holdService
 }

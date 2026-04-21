@@ -6,29 +6,39 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/signaturekey/billy/internal/transport/http/handler"
 	"github.com/signaturekey/billy/internal/transport/http/middleware"
+	"go.uber.org/zap"
 )
 
 type Router struct {
 	accountHandler  *handler.AccountHandler
 	transferHandler *handler.TransferHandler
 	holdHandler     *handler.HoldHandler
+	logger          *zap.Logger
 }
 
 func NewRouter(
 	accountHandler *handler.AccountHandler,
 	transferHandler *handler.TransferHandler,
 	holdHandler *handler.HoldHandler,
+	logger *zap.Logger,
 ) *Router {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	return &Router{
 		accountHandler:  accountHandler,
 		transferHandler: transferHandler,
 		holdHandler:     holdHandler,
+		logger:          logger,
 	}
 }
 
 func (r *Router) Mount() stdhttp.Handler {
 	g := gin.New()
-	g.Use(gin.Recovery())
+	g.Use(middleware.RequestIDMiddleware())
+	g.Use(middleware.LoggingMiddleware(r.logger))
+	g.Use(middleware.RecoveryMiddleware(r.logger))
 
 	g.GET("/health", func(ctx *gin.Context) {
 		ctx.JSON(stdhttp.StatusOK, gin.H{"status": "ok"})
