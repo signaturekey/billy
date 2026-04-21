@@ -41,6 +41,27 @@ func (service *transferService) Create(
 	toAccountID int64,
 	amount int64,
 ) (entity.Transfer, error) {
+	var transfer entity.Transfer
+	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var err error
+		transfer, err = service.CreateInTx(ctx, tx, userID, fromAccountID, toAccountID, amount)
+		return err
+	})
+	if err != nil {
+		return entity.Transfer{}, err
+	}
+
+	return transfer, nil
+}
+
+func (service *transferService) CreateInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID int64,
+	fromAccountID int64,
+	toAccountID int64,
+	amount int64,
+) (entity.Transfer, error) {
 	if amount <= 0 {
 		return entity.Transfer{}, domainerrors.ErrInvalidAmount
 	}
@@ -49,98 +70,90 @@ func (service *transferService) Create(
 		return entity.Transfer{}, domainerrors.ErrSameAccountTransfer
 	}
 
-	var transfer entity.Transfer
-	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		firstID, secondID := orderedAccountIDs(fromAccountID, toAccountID)
+	firstID, secondID := orderedAccountIDs(fromAccountID, toAccountID)
 
-		first, err := service.accounts.GetForUpdate(ctx, tx, firstID)
-		if err != nil {
-			return err
-		}
+	first, err := service.accounts.GetForUpdate(ctx, tx, firstID)
+	if err != nil {
+		return entity.Transfer{}, err
+	}
 
-		second, err := service.accounts.GetForUpdate(ctx, tx, secondID)
-		if err != nil {
-			return err
-		}
+	second, err := service.accounts.GetForUpdate(ctx, tx, secondID)
+	if err != nil {
+		return entity.Transfer{}, err
+	}
 
-		from, to := resolveTransferAccounts(first, second, fromAccountID)
+	from, to := resolveTransferAccounts(first, second, fromAccountID)
 
-		if from.UserID != userID || to.UserID != userID {
-			return domainerrors.ErrForbidden
-		}
+	if from.UserID != userID || to.UserID != userID {
+		return entity.Transfer{}, domainerrors.ErrForbidden
+	}
 
-		if from.Status != entity.AccountStatusActive || to.Status != entity.AccountStatusActive {
-			return domainerrors.ErrAccountBlocked
-		}
+	if from.Status != entity.AccountStatusActive || to.Status != entity.AccountStatusActive {
+		return entity.Transfer{}, domainerrors.ErrAccountBlocked
+	}
 
-		if from.Currency != to.Currency {
-			return domainerrors.ErrCurrencyMismatch
-		}
+	if from.Currency != to.Currency {
+		return entity.Transfer{}, domainerrors.ErrCurrencyMismatch
+	}
 
-		if err := validateAccountAmounts(from.Balance, from.ReservedAmount); err != nil {
-			return err
-		}
+	if err := validateAccountAmounts(from.Balance, from.ReservedAmount); err != nil {
+		return entity.Transfer{}, err
+	}
 
-		if err := validateAccountAmounts(to.Balance, to.ReservedAmount); err != nil {
-			return err
-		}
+	if err := validateAccountAmounts(to.Balance, to.ReservedAmount); err != nil {
+		return entity.Transfer{}, err
+	}
 
-		if from.Balance-from.ReservedAmount < amount {
-			return domainerrors.ErrInsufficientFunds
-		}
+	if from.Balance-from.ReservedAmount < amount {
+		return entity.Transfer{}, domainerrors.ErrInsufficientFunds
+	}
 
-		fromBalanceBefore := from.Balance
-		fromBalanceAfter := fromBalanceBefore - amount
-		toBalanceBefore := to.Balance
-		toBalanceAfter := toBalanceBefore + amount
+	fromBalanceBefore := from.Balance
+	fromBalanceAfter := fromBalanceBefore - amount
+	toBalanceBefore := to.Balance
+	toBalanceAfter := toBalanceBefore + amount
 
-		if err := service.accounts.UpdateBalance(ctx, tx, from.ID, fromBalanceAfter); err != nil {
-			return err
-		}
+	if err := service.accounts.UpdateBalance(ctx, tx, from.ID, fromBalanceAfter); err != nil {
+		return entity.Transfer{}, err
+	}
 
-		if err := service.accounts.UpdateBalance(ctx, tx, to.ID, toBalanceAfter); err != nil {
-			return err
-		}
+	if err := service.accounts.UpdateBalance(ctx, tx, to.ID, toBalanceAfter); err != nil {
+		return entity.Transfer{}, err
+	}
 
-		transfer, err = service.transfers.Create(ctx, tx, entity.Transfer{
-			FromAccountID: from.ID,
-			ToAccountID:   to.ID,
-			Amount:        amount,
-			Status:        entity.TransferStatusCompleted,
-		})
-		if err != nil {
-			return err
-		}
-
-		if _, err := service.operations.Create(ctx, tx, entity.LedgerEntry{
-			AccountID:     from.ID,
-			Type:          entity.LedgerEntryTypeTransferOut,
-			Amount:        amount,
-			Currency:      from.Currency,
-			BalanceBefore: fromBalanceBefore,
-			BalanceAfter:  fromBalanceAfter,
-			ReferenceType: "transfer",
-			ReferenceID:   transfer.ID,
-		}); err != nil {
-			return err
-		}
-
-		if _, err := service.operations.Create(ctx, tx, entity.LedgerEntry{
-			AccountID:     to.ID,
-			Type:          entity.LedgerEntryTypeTransferIn,
-			Amount:        amount,
-			Currency:      to.Currency,
-			BalanceBefore: toBalanceBefore,
-			BalanceAfter:  toBalanceAfter,
-			ReferenceType: "transfer",
-			ReferenceID:   transfer.ID,
-		}); err != nil {
-			return err
-		}
-
-		return nil
+	transfer, err := service.transfers.Create(ctx, tx, entity.Transfer{
+		FromAccountID: from.ID,
+		ToAccountID:   to.ID,
+		Amount:        amount,
+		Status:        entity.TransferStatusCompleted,
 	})
 	if err != nil {
+		return entity.Transfer{}, err
+	}
+
+	if _, err := service.operations.Create(ctx, tx, entity.LedgerEntry{
+		AccountID:     from.ID,
+		Type:          entity.LedgerEntryTypeTransferOut,
+		Amount:        amount,
+		Currency:      from.Currency,
+		BalanceBefore: fromBalanceBefore,
+		BalanceAfter:  fromBalanceAfter,
+		ReferenceType: "transfer",
+		ReferenceID:   transfer.ID,
+	}); err != nil {
+		return entity.Transfer{}, err
+	}
+
+	if _, err := service.operations.Create(ctx, tx, entity.LedgerEntry{
+		AccountID:     to.ID,
+		Type:          entity.LedgerEntryTypeTransferIn,
+		Amount:        amount,
+		Currency:      to.Currency,
+		BalanceBefore: toBalanceBefore,
+		BalanceAfter:  toBalanceAfter,
+		ReferenceType: "transfer",
+		ReferenceID:   transfer.ID,
+	}); err != nil {
 		return entity.Transfer{}, err
 	}
 

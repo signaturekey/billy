@@ -88,14 +88,17 @@ func main() {
 
 func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration) (http.Handler, worker.HoldExpirer) {
 	txManager := postgres.NewTxManager(db)
+	idempotencyRepository := postgres.NewIdempotencyRepository()
+	idempotencyExecutor := service.NewIdempotencyExecutor(txManager, idempotencyRepository, 0)
+
 	accountRepository := postgres.NewAccountRepository(db)
 	ledgerRepository := postgres.NewLedgerRepository(db)
 	accountService := service.NewAccountService(txManager, accountRepository, ledgerRepository)
-	accountHandler := handler.NewAccountHandler(accountService)
+	accountHandler := handler.NewAccountHandler(accountService, idempotencyExecutor)
 
 	transferRepository := postgres.NewTransferRepository()
 	transferService := service.NewTransferService(txManager, accountRepository, transferRepository, ledgerRepository)
-	transferHandler := handler.NewTransferHandler(transferService)
+	transferHandler := handler.NewTransferHandler(transferService, idempotencyExecutor)
 
 	holdRepository := postgres.NewHoldRepository(db)
 	holdService := service.NewHoldService(
@@ -105,7 +108,7 @@ func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration) (http.Handler, worker
 		ledgerRepository,
 		ttl,
 	)
-	holdHandler := handler.NewHoldHandler(holdService)
+	holdHandler := handler.NewHoldHandler(holdService, idempotencyExecutor)
 
 	r := transporthttp.NewRouter(accountHandler, transferHandler, holdHandler)
 	return r.Mount(), holdService

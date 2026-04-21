@@ -114,41 +114,57 @@ func (service *accountService) TopUp(
 	accountID int64,
 	amount int64,
 ) (entity.LedgerEntry, error) {
+	var entry entity.LedgerEntry
+	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var err error
+		entry, err = service.TopUpInTx(ctx, tx, userID, accountID, amount)
+		return err
+	})
+	if err != nil {
+		return entity.LedgerEntry{}, err
+	}
+
+	return entry, nil
+}
+
+func (service *accountService) TopUpInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID int64,
+	accountID int64,
+	amount int64,
+) (entity.LedgerEntry, error) {
 	if amount <= 0 {
 		return entity.LedgerEntry{}, domainerrors.ErrInvalidAmount
 	}
 
-	var entry entity.LedgerEntry
-	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		account, err := service.accounts.GetForUpdate(ctx, tx, accountID)
-		if err != nil {
-			return err
-		}
+	account, err := service.accounts.GetForUpdate(ctx, tx, accountID)
+	if err != nil {
+		return entity.LedgerEntry{}, err
+	}
 
-		if account.UserID != userID {
-			return domainerrors.ErrForbidden
-		}
+	if account.UserID != userID {
+		return entity.LedgerEntry{}, domainerrors.ErrForbidden
+	}
 
-		if err := validateAccountAmounts(account.Balance, account.ReservedAmount); err != nil {
-			return err
-		}
+	if err := validateAccountAmounts(account.Balance, account.ReservedAmount); err != nil {
+		return entity.LedgerEntry{}, err
+	}
 
-		before := account.Balance
-		after := before + amount
+	before := account.Balance
+	after := before + amount
 
-		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, after); err != nil {
-			return err
-		}
+	if err := service.accounts.UpdateBalance(ctx, tx, account.ID, after); err != nil {
+		return entity.LedgerEntry{}, err
+	}
 
-		entry, err = service.operations.Create(ctx, tx, entity.LedgerEntry{
-			AccountID:     account.ID,
-			Type:          entity.LedgerEntryTypeTopup,
-			Amount:        amount,
-			Currency:      account.Currency,
-			BalanceBefore: before,
-			BalanceAfter:  after,
-		})
-		return err
+	entry, err := service.operations.Create(ctx, tx, entity.LedgerEntry{
+		AccountID:     account.ID,
+		Type:          entity.LedgerEntryTypeTopup,
+		Amount:        amount,
+		Currency:      account.Currency,
+		BalanceBefore: before,
+		BalanceAfter:  after,
 	})
 	if err != nil {
 		return entity.LedgerEntry{}, err
@@ -163,45 +179,61 @@ func (service *accountService) Withdraw(
 	accountID int64,
 	amount int64,
 ) (entity.LedgerEntry, error) {
+	var entry entity.LedgerEntry
+	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var err error
+		entry, err = service.WithdrawInTx(ctx, tx, userID, accountID, amount)
+		return err
+	})
+	if err != nil {
+		return entity.LedgerEntry{}, err
+	}
+
+	return entry, nil
+}
+
+func (service *accountService) WithdrawInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID int64,
+	accountID int64,
+	amount int64,
+) (entity.LedgerEntry, error) {
 	if amount <= 0 {
 		return entity.LedgerEntry{}, domainerrors.ErrInvalidAmount
 	}
 
-	var entry entity.LedgerEntry
-	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		account, err := service.accounts.GetForUpdate(ctx, tx, accountID)
-		if err != nil {
-			return err
-		}
+	account, err := service.accounts.GetForUpdate(ctx, tx, accountID)
+	if err != nil {
+		return entity.LedgerEntry{}, err
+	}
 
-		if account.UserID != userID {
-			return domainerrors.ErrForbidden
-		}
+	if account.UserID != userID {
+		return entity.LedgerEntry{}, domainerrors.ErrForbidden
+	}
 
-		if err := validateAccountAmounts(account.Balance, account.ReservedAmount); err != nil {
-			return err
-		}
+	if err := validateAccountAmounts(account.Balance, account.ReservedAmount); err != nil {
+		return entity.LedgerEntry{}, err
+	}
 
-		if account.Balance-account.ReservedAmount < amount {
-			return domainerrors.ErrInsufficientFunds
-		}
+	if account.Balance-account.ReservedAmount < amount {
+		return entity.LedgerEntry{}, domainerrors.ErrInsufficientFunds
+	}
 
-		before := account.Balance
-		after := before - amount
+	before := account.Balance
+	after := before - amount
 
-		if err := service.accounts.UpdateBalance(ctx, tx, account.ID, after); err != nil {
-			return err
-		}
+	if err := service.accounts.UpdateBalance(ctx, tx, account.ID, after); err != nil {
+		return entity.LedgerEntry{}, err
+	}
 
-		entry, err = service.operations.Create(ctx, tx, entity.LedgerEntry{
-			AccountID:     account.ID,
-			Type:          entity.LedgerEntryTypeWithdrawal,
-			Amount:        amount,
-			Currency:      account.Currency,
-			BalanceBefore: before,
-			BalanceAfter:  after,
-		})
-		return err
+	entry, err := service.operations.Create(ctx, tx, entity.LedgerEntry{
+		AccountID:     account.ID,
+		Type:          entity.LedgerEntryTypeWithdrawal,
+		Amount:        amount,
+		Currency:      account.Currency,
+		BalanceBefore: before,
+		BalanceAfter:  after,
 	})
 	if err != nil {
 		return entity.LedgerEntry{}, err
