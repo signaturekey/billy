@@ -11,6 +11,7 @@ import (
 )
 
 type HoldRepository interface {
+	ListExpiredPending(ctx context.Context, now time.Time, limit int) ([]entity.Hold, error)
 	Create(ctx context.Context, tx pgx.Tx, hold entity.Hold) (entity.Hold, error)
 	GetByIDForUpdate(ctx context.Context, tx pgx.Tx, id int64) (entity.Hold, error)
 	UpdateStatus(ctx context.Context, tx pgx.Tx, id int64, status entity.HoldStatus) (entity.Hold, error)
@@ -174,6 +175,74 @@ func (service *holdService) Cancel(ctx context.Context, userID int64, holdID int
 	}
 
 	return updated, nil
+}
+
+func (service *holdService) ExpirePending(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+
+	holds, err := service.holds.ListExpiredPending(ctx, time.Now(), limit)
+	if err != nil {
+		return 0, err
+	}
+
+	expired := 0
+	for _, listed := range holds {
+		processed, err := service.expirePendingHold(ctx, listed.ID)
+		if err != nil {
+			return expired, err
+		}
+		if processed {
+			expired++
+		}
+	}
+
+	return expired, nil
+}
+
+func (service *holdService) expirePendingHold(ctx context.Context, holdID int64) (bool, error) {
+	processed := false
+	err := service.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		hold, err := service.holds.GetByIDForUpdate(ctx, tx, holdID)
+		if err != nil {
+			return err
+		}
+
+		if hold.Status != entity.HoldStatusPending || !hold.ExpiresAt.Before(time.Now()) {
+			return nil
+		}
+
+		account, err := service.accounts.GetForUpdate(ctx, tx, hold.AccountID)
+		if err != nil {
+			return err
+		}
+
+		if account.ReservedAmount < hold.Amount {
+			return domainerrors.ErrInvalidHoldStateTransition
+		}
+
+		reservedAfter := account.ReservedAmount - hold.Amount
+		if err := validateAccountAmounts(account.Balance, reservedAfter); err != nil {
+			return err
+		}
+
+		if err := service.accounts.UpdateAmounts(ctx, tx, account.ID, account.Balance, reservedAfter); err != nil {
+			return err
+		}
+
+		if _, err := service.holds.UpdateStatus(ctx, tx, hold.ID, entity.HoldStatusExpired); err != nil {
+			return err
+		}
+
+		processed = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return processed, nil
 }
 
 func (service *holdService) lockHoldAndAccount(

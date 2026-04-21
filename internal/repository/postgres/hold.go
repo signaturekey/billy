@@ -4,17 +4,56 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/signaturekey/billy/internal/domain/entity"
 	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
 )
 
-type holdRepository struct{}
+type holdRepository struct {
+	pool *pgxpool.Pool
+}
 
-func NewHoldRepository() *holdRepository {
-	return &holdRepository{}
+func NewHoldRepository(pool *pgxpool.Pool) *holdRepository {
+	return &holdRepository{pool: pool}
+}
+
+func (repo *holdRepository) ListExpiredPending(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) ([]entity.Hold, error) {
+	const query = `
+		SELECT
+			id,
+			account_id,
+			amount,
+			status,
+			expires_at,
+			created_at,
+			updated_at
+		FROM holds
+		WHERE status = $1
+			AND expires_at < $2
+		ORDER BY expires_at, id
+		LIMIT $3
+	`
+
+	rows, err := repo.pool.Query(ctx, query, entity.HoldStatusPending, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query expired pending holds: %w", err)
+	}
+	defer rows.Close()
+
+	holds, err := pgx.CollectRows(rows, pgx.RowToStructByName[entity.Hold])
+	if err != nil {
+		return nil, fmt.Errorf("collect expired pending holds: %w", err)
+	}
+
+	return holds, nil
 }
 
 func (repo *holdRepository) Create(ctx context.Context, tx pgx.Tx, hold entity.Hold) (entity.Hold, error) {
