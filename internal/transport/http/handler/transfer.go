@@ -73,6 +73,7 @@ func (handler *TransferHandler) Create(ctx *gin.Context) {
 
 	result, err := handler.idempotency.Execute(
 		ctx.Request.Context(),
+		userID,
 		idempotencyKey,
 		"transfer",
 		hash,

@@ -20,6 +20,7 @@ const idempotencyKeyHeader = "Idempotency-Key"
 type IdempotencyExecutor interface {
 	Execute(
 		ctx context.Context,
+		userID int64,
 		key string,
 		operationType string,
 		requestHash string,

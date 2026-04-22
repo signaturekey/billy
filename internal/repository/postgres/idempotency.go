@@ -24,14 +24,15 @@ func (repo *idempotencyRepository) CreateProcessing(
 ) error {
 	const query = `
 		INSERT INTO idempotency_keys (
+			user_id,
 			key,
 			operation_type,
 			request_hash,
 			status,
 			expires_at
 		)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (key, operation_type) DO NOTHING
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (user_id, key, operation_type) DO NOTHING
 		RETURNING key
 	`
 
@@ -39,6 +40,7 @@ func (repo *idempotencyRepository) CreateProcessing(
 	if err := tx.QueryRow(
 		ctx,
 		query,
+		record.UserID,
 		record.Key,
 		record.OperationType,
 		record.RequestHash,
@@ -57,11 +59,13 @@ func (repo *idempotencyRepository) CreateProcessing(
 func (repo *idempotencyRepository) GetByKey(
 	ctx context.Context,
 	tx pgx.Tx,
+	userID int64,
 	key string,
 	operationType string,
 ) (entity.IdempotencyKey, error) {
 	const query = `
 		SELECT
+			user_id,
 			key,
 			operation_type,
 			request_hash,
@@ -72,11 +76,12 @@ func (repo *idempotencyRepository) GetByKey(
 			updated_at,
 			expires_at
 		FROM idempotency_keys
-		WHERE key = $1
-			AND operation_type = $2
+		WHERE user_id = $1
+			AND key = $2
+			AND operation_type = $3
 	`
 
-	rows, err := tx.Query(ctx, query, key, operationType)
+	rows, err := tx.Query(ctx, query, userID, key, operationType)
 	if err != nil {
 		return entity.IdempotencyKey{}, fmt.Errorf("query idempotency key: %w", err)
 	}
@@ -96,6 +101,7 @@ func (repo *idempotencyRepository) GetByKey(
 func (repo *idempotencyRepository) MarkCompleted(
 	ctx context.Context,
 	tx pgx.Tx,
+	userID int64,
 	key string,
 	operationType string,
 	responseCode int,
@@ -104,17 +110,19 @@ func (repo *idempotencyRepository) MarkCompleted(
 	const query = `
 		UPDATE idempotency_keys
 		SET
-			status = $3,
-			response_code = $4,
-			response_body = $5,
+			status = $4,
+			response_code = $5,
+			response_body = $6,
 			updated_at = now()
-		WHERE key = $1
-			AND operation_type = $2
+		WHERE user_id = $1
+			AND key = $2
+			AND operation_type = $3
 	`
 
 	if _, err := tx.Exec(
 		ctx,
 		query,
+		userID,
 		key,
 		operationType,
 		entity.IdempotencyStatusCompleted,

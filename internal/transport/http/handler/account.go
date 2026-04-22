@@ -127,6 +127,7 @@ func (handler *AccountHandler) TopUp(ctx *gin.Context) {
 
 	result, err := handler.idempotency.Execute(
 		ctx.Request.Context(),
+		id,
 		idempotencyKey,
 		"topup",
 		hash,
@@ -183,6 +184,7 @@ func (handler *AccountHandler) Withdraw(ctx *gin.Context) {
 
 	result, err := handler.idempotency.Execute(
 		ctx.Request.Context(),
+		id,
 		idempotencyKey,
 		"withdrawal",
 		hash,

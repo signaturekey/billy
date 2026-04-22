@@ -13,6 +13,7 @@ const (
 )
 
 type IdempotencyKey struct {
+	UserID        int64
 	Key           string
 	OperationType string
 	RequestHash   string

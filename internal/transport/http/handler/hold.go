@@ -63,6 +63,7 @@ func (handler *HoldHandler) Create(ctx *gin.Context) {
 
 	result, err := handler.idempotency.Execute(
 		ctx.Request.Context(),
+		userID,
 		idempotencyKey,
 		"hold_create",
 		hash,
@@ -111,6 +112,7 @@ func (handler *HoldHandler) Confirm(ctx *gin.Context) {
 
 	result, err := handler.idempotency.Execute(
 		ctx.Request.Context(),
+		userID,
 		idempotencyKey,
 		"hold_confirm",
 		hash,
@@ -159,6 +161,7 @@ func (handler *HoldHandler) Cancel(ctx *gin.Context) {
 
 	result, err := handler.idempotency.Execute(
 		ctx.Request.Context(),
+		userID,
 		idempotencyKey,
 		"hold_cancel",
 		hash,

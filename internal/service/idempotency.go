@@ -16,10 +16,17 @@ const defaultIdempotencyTTL = 24 * time.Hour
 
 type IdempotencyRepository interface {
 	CreateProcessing(ctx context.Context, tx pgx.Tx, record entity.IdempotencyKey) error
-	GetByKey(ctx context.Context, tx pgx.Tx, key string, operationType string) (entity.IdempotencyKey, error)
+	GetByKey(
+		ctx context.Context,
+		tx pgx.Tx,
+		userID int64,
+		key string,
+		operationType string,
+	) (entity.IdempotencyKey, error)
 	MarkCompleted(
 		ctx context.Context,
 		tx pgx.Tx,
+		userID int64,
 		key string,
 		operationType string,
 		responseCode int,
@@ -59,6 +66,7 @@ func NewIdempotencyExecutor(
 
 func (executor *IdempotencyExecutor) Execute(
 	ctx context.Context,
+	userID int64,
 	key string,
 	operationType string,
 	requestHash string,
@@ -67,6 +75,7 @@ func (executor *IdempotencyExecutor) Execute(
 	var result IdempotencyResult
 	err := executor.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		err := executor.keys.CreateProcessing(ctx, tx, entity.IdempotencyKey{
+			UserID:        userID,
 			Key:           key,
 			OperationType: operationType,
 			RequestHash:   requestHash,
@@ -74,7 +83,7 @@ func (executor *IdempotencyExecutor) Execute(
 		})
 		if err != nil {
 			if errors.Is(err, domainerrors.ErrIdempotencyKeyExists) {
-				existing, err := executor.keys.GetByKey(ctx, tx, key, operationType)
+				existing, err := executor.keys.GetByKey(ctx, tx, userID, key, operationType)
 				if err != nil {
 					return err
 				}
@@ -108,7 +117,7 @@ func (executor *IdempotencyExecutor) Execute(
 			return err
 		}
 
-		if err := executor.keys.MarkCompleted(ctx, tx, key, operationType, statusCode, body); err != nil {
+		if err := executor.keys.MarkCompleted(ctx, tx, userID, key, operationType, statusCode, body); err != nil {
 			return err
 		}
 
