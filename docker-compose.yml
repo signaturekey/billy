@@ -1,4 +1,34 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: billy-api
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV}
+      APP_PORT: ${APP_PORT}
+      APP_BASE_URL: ${APP_BASE_URL}
+      HOLD_TTL: ${HOLD_TTL}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SSL_MODE: ${DB_SSL_MODE}
+      DB_MAX_CONNS: ${DB_MAX_CONNS}
+      DB_MIN_CONNS: ${DB_MIN_CONNS}
+      DB_MAX_CONN_LIFETIME: ${DB_MAX_CONN_LIFETIME}
+      DB_MAX_CONN_IDLE_TIME: ${DB_MAX_CONN_IDLE_TIME}
+      DB_HEALTH_CHECK_PERIOD: ${DB_HEALTH_CHECK_PERIOD}
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - billy-backend
+
   db:
     image: postgres:18.1-alpine
     container_name: billy-db
