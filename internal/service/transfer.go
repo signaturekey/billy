@@ -84,7 +84,7 @@ func (service *transferService) CreateInTx(
 
 	from, to := resolveTransferAccounts(first, second, fromAccountID)
 
-	if from.UserID != userID || to.UserID != userID {
+	if from.UserID != userID {
 		return entity.Transfer{}, domainerrors.ErrForbidden
 	}
 

@@ -104,6 +104,10 @@ func (service *holdService) CreateInTx(
 		return entity.Hold{}, err
 	}
 
+	if err := service.writeHoldLedgerEntry(ctx, tx, account, hold, entity.LedgerEntryTypeHoldCreated); err != nil {
+		return entity.Hold{}, err
+	}
+
 	return hold, nil
 }
 
@@ -220,6 +224,10 @@ func (service *holdService) CancelInTx(
 		return entity.Hold{}, err
 	}
 
+	if err := service.writeHoldLedgerEntry(ctx, tx, account, hold, entity.LedgerEntryTypeHoldCancelled); err != nil {
+		return entity.Hold{}, err
+	}
+
 	return updated, nil
 }
 
@@ -281,6 +289,10 @@ func (service *holdService) expirePendingHold(ctx context.Context, holdID int64)
 			return err
 		}
 
+		if err := service.writeHoldLedgerEntry(ctx, tx, account, hold, entity.LedgerEntryTypeHoldExpired); err != nil {
+			return err
+		}
+
 		processed = true
 		return nil
 	})
@@ -324,6 +336,26 @@ func validateHoldAccount(account entity.Account, userID int64) error {
 	}
 
 	return validateAccountAmounts(account.Balance, account.ReservedAmount)
+}
+
+func (service *holdService) writeHoldLedgerEntry(
+	ctx context.Context,
+	tx pgx.Tx,
+	account entity.Account,
+	hold entity.Hold,
+	entryType entity.LedgerEntryType,
+) error {
+	_, err := service.operations.Create(ctx, tx, entity.LedgerEntry{
+		AccountID:     account.ID,
+		Type:          entryType,
+		Amount:        hold.Amount,
+		Currency:      account.Currency,
+		BalanceBefore: account.Balance,
+		BalanceAfter:  account.Balance,
+		ReferenceType: "hold",
+		ReferenceID:   hold.ID,
+	})
+	return err
 }
 
 func validatePendingHold(hold entity.Hold) error {

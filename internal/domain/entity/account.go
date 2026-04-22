@@ -31,11 +31,14 @@ type AccountBalance struct {
 type LedgerEntryType string
 
 const (
-	LedgerEntryTypeTopup       LedgerEntryType = "topup"
-	LedgerEntryTypeWithdrawal  LedgerEntryType = "withdrawal"
-	LedgerEntryTypeTransferIn  LedgerEntryType = "transfer_in"
-	LedgerEntryTypeTransferOut LedgerEntryType = "transfer_out"
-	LedgerEntryTypeHoldConfirm LedgerEntryType = "hold_confirmed"
+	LedgerEntryTypeTopup         LedgerEntryType = "topup"
+	LedgerEntryTypeWithdrawal    LedgerEntryType = "withdrawal"
+	LedgerEntryTypeTransferIn    LedgerEntryType = "transfer_in"
+	LedgerEntryTypeTransferOut   LedgerEntryType = "transfer_out"
+	LedgerEntryTypeHoldCreated   LedgerEntryType = "hold_created"
+	LedgerEntryTypeHoldConfirm   LedgerEntryType = "hold_confirmed"
+	LedgerEntryTypeHoldCancelled LedgerEntryType = "hold_cancelled"
+	LedgerEntryTypeHoldExpired   LedgerEntryType = "hold_expired"
 )
 
 type LedgerEntry struct {
