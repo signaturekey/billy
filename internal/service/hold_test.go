@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/signaturekey/billy/internal/domain/entity"
 	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
@@ -18,9 +19,8 @@ func TestHoldServiceCreateRejectsNonPositiveAmount(t *testing.T) {
 	accounts, account := newHoldTestAccount()
 	service := NewHoldService(holdTestTxManager{}, accounts, newHoldTestRepository(), &holdTestLedgerRepository{}, time.Hour)
 
-	if _, err := service.Create(context.Background(), 1, account.ID, 0); !errors.Is(err, domainerrors.ErrInvalidAmount) {
-		t.Fatalf("create hold zero error = %v, want ErrInvalidAmount", err)
-	}
+	_, err := service.Create(context.Background(), 1, account.ID, 0)
+	require.ErrorIs(t, err, domainerrors.ErrInvalidAmount)
 }
 
 func TestHoldServiceCreateRejectsInsufficientAvailableFunds(t *testing.T) {
@@ -31,9 +31,8 @@ func TestHoldServiceCreateRejectsInsufficientAvailableFunds(t *testing.T) {
 	accounts.records[account.ID] = account
 	service := NewHoldService(holdTestTxManager{}, accounts, newHoldTestRepository(), &holdTestLedgerRepository{}, time.Hour)
 
-	if _, err := service.Create(context.Background(), 1, account.ID, 11); !errors.Is(err, domainerrors.ErrInsufficientFunds) {
-		t.Fatalf("create hold over available error = %v, want ErrInsufficientFunds", err)
-	}
+	_, err := service.Create(context.Background(), 1, account.ID, 11)
+	require.ErrorIs(t, err, domainerrors.ErrInsufficientFunds)
 }
 
 func TestHoldServiceCreateIncreasesReservedAmount(t *testing.T) {
@@ -43,17 +42,12 @@ func TestHoldServiceCreateIncreasesReservedAmount(t *testing.T) {
 	service := NewHoldService(holdTestTxManager{}, accounts, newHoldTestRepository(), &holdTestLedgerRepository{}, time.Hour)
 
 	hold, err := service.Create(context.Background(), 1, account.ID, 30)
-	if err != nil {
-		t.Fatalf("create hold: %v", err)
-	}
-	if hold.Status != entity.HoldStatusPending {
-		t.Fatalf("hold status = %q, want pending", hold.Status)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, entity.HoldStatusPending, hold.Status)
 
-	updated, _ := accounts.GetByID(context.Background(), account.ID)
-	if updated.ReservedAmount != 30 {
-		t.Fatalf("reserved amount = %d, want 30", updated.ReservedAmount)
-	}
+	updated, err := accounts.GetByID(context.Background(), account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), updated.ReservedAmount)
 }
 
 func TestHoldServiceConfirmOnlyPendingHold(t *testing.T) {
@@ -87,9 +81,7 @@ func TestHoldServiceConfirmOnlyPendingHold(t *testing.T) {
 			service := NewHoldService(holdTestTxManager{}, accounts, holds, &holdTestLedgerRepository{}, time.Hour)
 
 			_, err := service.Confirm(context.Background(), 1, hold.ID)
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("confirm %s hold error = %v, want %v", tt.status, err, tt.wantErr)
-			}
+			require.ErrorIs(t, err, tt.wantErr)
 		})
 	}
 }
@@ -125,9 +117,7 @@ func TestHoldServiceCancelOnlyPendingHold(t *testing.T) {
 			service := NewHoldService(holdTestTxManager{}, accounts, holds, &holdTestLedgerRepository{}, time.Hour)
 
 			_, err := service.Cancel(context.Background(), 1, hold.ID)
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("cancel %s hold error = %v, want %v", tt.status, err, tt.wantErr)
-			}
+			require.ErrorIs(t, err, tt.wantErr)
 		})
 	}
 }
@@ -147,9 +137,8 @@ func TestHoldServiceConfirmRejectsExpiredPendingHold(t *testing.T) {
 	})
 	service := NewHoldService(holdTestTxManager{}, accounts, holds, &holdTestLedgerRepository{}, time.Hour)
 
-	if _, err := service.Confirm(context.Background(), 1, hold.ID); !errors.Is(err, domainerrors.ErrHoldExpired) {
-		t.Fatalf("confirm expired pending hold error = %v, want ErrHoldExpired", err)
-	}
+	_, err := service.Confirm(context.Background(), 1, hold.ID)
+	require.ErrorIs(t, err, domainerrors.ErrHoldExpired)
 }
 
 func TestHoldServiceConfirmChargesAndReleasesReservedAmount(t *testing.T) {
@@ -168,17 +157,13 @@ func TestHoldServiceConfirmChargesAndReleasesReservedAmount(t *testing.T) {
 	service := NewHoldService(holdTestTxManager{}, accounts, holds, &holdTestLedgerRepository{}, time.Hour)
 
 	updatedHold, err := service.Confirm(context.Background(), 1, hold.ID)
-	if err != nil {
-		t.Fatalf("confirm hold: %v", err)
-	}
-	if updatedHold.Status != entity.HoldStatusConfirmed {
-		t.Fatalf("hold status = %q, want confirmed", updatedHold.Status)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, entity.HoldStatusConfirmed, updatedHold.Status)
 
-	updatedAccount, _ := accounts.GetByID(context.Background(), account.ID)
-	if updatedAccount.Balance != 50 || updatedAccount.ReservedAmount != 0 {
-		t.Fatalf("amounts after confirm = balance %d reserved %d, want 50/0", updatedAccount.Balance, updatedAccount.ReservedAmount)
-	}
+	updatedAccount, err := accounts.GetByID(context.Background(), account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(50), updatedAccount.Balance)
+	assert.Equal(t, int64(0), updatedAccount.ReservedAmount)
 }
 
 func TestHoldServiceCancelReleasesReservedAmount(t *testing.T) {
@@ -197,17 +182,13 @@ func TestHoldServiceCancelReleasesReservedAmount(t *testing.T) {
 	service := NewHoldService(holdTestTxManager{}, accounts, holds, &holdTestLedgerRepository{}, time.Hour)
 
 	updatedHold, err := service.Cancel(context.Background(), 1, hold.ID)
-	if err != nil {
-		t.Fatalf("cancel hold: %v", err)
-	}
-	if updatedHold.Status != entity.HoldStatusCancelled {
-		t.Fatalf("hold status = %q, want cancelled", updatedHold.Status)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, entity.HoldStatusCancelled, updatedHold.Status)
 
-	updatedAccount, _ := accounts.GetByID(context.Background(), account.ID)
-	if updatedAccount.Balance != 100 || updatedAccount.ReservedAmount != 0 {
-		t.Fatalf("amounts after cancel = balance %d reserved %d, want 100/0", updatedAccount.Balance, updatedAccount.ReservedAmount)
-	}
+	updatedAccount, err := accounts.GetByID(context.Background(), account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), updatedAccount.Balance)
+	assert.Equal(t, int64(0), updatedAccount.ReservedAmount)
 }
 
 func TestHoldServiceExpirePendingReleasesOnlyExpiredPendingHolds(t *testing.T) {
@@ -238,29 +219,18 @@ func TestHoldServiceExpirePendingReleasesOnlyExpiredPendingHolds(t *testing.T) {
 	service := NewHoldService(holdTestTxManager{}, accounts, holds, &holdTestLedgerRepository{}, time.Hour)
 
 	count, err := service.ExpirePending(context.Background(), 10)
-	if err != nil {
-		t.Fatalf("expire pending: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expired count = %d, want 1", count)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 
 	updatedHold := holds.records[expired.ID]
-	if updatedHold.Status != entity.HoldStatusExpired {
-		t.Fatalf("expired hold status = %q, want expired", updatedHold.Status)
-	}
-	updatedAccount, _ := accounts.GetByID(context.Background(), account.ID)
-	if updatedAccount.ReservedAmount != 30 {
-		t.Fatalf("reserved amount after expiration = %d, want 30", updatedAccount.ReservedAmount)
-	}
+	assert.Equal(t, entity.HoldStatusExpired, updatedHold.Status)
+	updatedAccount, err := accounts.GetByID(context.Background(), account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(30), updatedAccount.ReservedAmount)
 
 	secondCount, err := service.ExpirePending(context.Background(), 10)
-	if err != nil {
-		t.Fatalf("expire pending second run: %v", err)
-	}
-	if secondCount != 0 {
-		t.Fatalf("second expired count = %d, want 0", secondCount)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 0, secondCount)
 }
 
 func newHoldTestAccount() (*holdTestAccountRepository, entity.Account) {

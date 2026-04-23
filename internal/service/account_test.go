@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/signaturekey/billy/internal/domain/entity"
 	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
@@ -19,16 +20,11 @@ func TestAccountServiceCreateValidation(t *testing.T) {
 	service := NewAccountService(accountTestTxManager{}, accounts, &accountTestLedgerRepository{})
 
 	account, err := service.Create(context.Background(), 10, "usd")
-	if err != nil {
-		t.Fatalf("create lowercase currency: %v", err)
-	}
-	if account.Currency != "USD" {
-		t.Fatalf("currency = %q, want USD", account.Currency)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "USD", account.Currency)
 
-	if _, err := service.Create(context.Background(), 10, "US"); !errors.Is(err, domainerrors.ErrInvalidCurrency) {
-		t.Fatalf("create invalid currency error = %v, want ErrInvalidCurrency", err)
-	}
+	_, err = service.Create(context.Background(), 10, "US")
+	require.ErrorIs(t, err, domainerrors.ErrInvalidCurrency)
 }
 
 func TestAccountServiceGetByIDRejectsOtherUserAccount(t *testing.T) {
@@ -43,9 +39,7 @@ func TestAccountServiceGetByIDRejectsOtherUserAccount(t *testing.T) {
 	service := NewAccountService(accountTestTxManager{}, accounts, &accountTestLedgerRepository{})
 
 	_, err := service.GetByID(context.Background(), 20, account.ID)
-	if !errors.Is(err, domainerrors.ErrForbidden) {
-		t.Fatalf("get other user's account error = %v, want ErrForbidden", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrForbidden)
 }
 
 func TestAccountServiceGetBalanceUsesAvailableAmount(t *testing.T) {
@@ -62,12 +56,8 @@ func TestAccountServiceGetBalanceUsesAvailableAmount(t *testing.T) {
 	service := NewAccountService(accountTestTxManager{}, accounts, &accountTestLedgerRepository{})
 
 	balance, err := service.GetBalance(context.Background(), 10, account.ID)
-	if err != nil {
-		t.Fatalf("get balance: %v", err)
-	}
-	if balance.AvailableAmount != 70 {
-		t.Fatalf("available amount = %d, want 70", balance.AvailableAmount)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, int64(70), balance.AvailableAmount)
 }
 
 func TestAccountServiceTopupRejectsNonPositiveAmount(t *testing.T) {
@@ -77,9 +67,8 @@ func TestAccountServiceTopupRejectsNonPositiveAmount(t *testing.T) {
 	account := accounts.add(entity.Account{UserID: 1, Currency: "USD", Status: entity.AccountStatusActive})
 	service := NewAccountService(accountTestTxManager{}, accounts, &accountTestLedgerRepository{})
 
-	if _, err := service.TopUp(context.Background(), 1, account.ID, 0); !errors.Is(err, domainerrors.ErrInvalidAmount) {
-		t.Fatalf("topup zero error = %v, want ErrInvalidAmount", err)
-	}
+	_, err := service.TopUp(context.Background(), 1, account.ID, 0)
+	require.ErrorIs(t, err, domainerrors.ErrInvalidAmount)
 }
 
 func TestAccountServiceWithdrawRejectsNonPositiveAmount(t *testing.T) {
@@ -89,9 +78,8 @@ func TestAccountServiceWithdrawRejectsNonPositiveAmount(t *testing.T) {
 	account := accounts.add(entity.Account{UserID: 1, Currency: "USD", Balance: 100, Status: entity.AccountStatusActive})
 	service := NewAccountService(accountTestTxManager{}, accounts, &accountTestLedgerRepository{})
 
-	if _, err := service.Withdraw(context.Background(), 1, account.ID, -1); !errors.Is(err, domainerrors.ErrInvalidAmount) {
-		t.Fatalf("withdraw negative error = %v, want ErrInvalidAmount", err)
-	}
+	_, err := service.Withdraw(context.Background(), 1, account.ID, -1)
+	require.ErrorIs(t, err, domainerrors.ErrInvalidAmount)
 }
 
 func TestAccountServiceWithdrawRejectsInsufficientAvailableFunds(t *testing.T) {
@@ -107,9 +95,8 @@ func TestAccountServiceWithdrawRejectsInsufficientAvailableFunds(t *testing.T) {
 	})
 	service := NewAccountService(accountTestTxManager{}, accounts, &accountTestLedgerRepository{})
 
-	if _, err := service.Withdraw(context.Background(), 1, account.ID, 21); !errors.Is(err, domainerrors.ErrInsufficientFunds) {
-		t.Fatalf("withdraw over available error = %v, want ErrInsufficientFunds", err)
-	}
+	_, err := service.Withdraw(context.Background(), 1, account.ID, 21)
+	require.ErrorIs(t, err, domainerrors.ErrInsufficientFunds)
 }
 
 func TestAccountServiceWithdrawUsesAvailableBalance(t *testing.T) {
@@ -125,14 +112,13 @@ func TestAccountServiceWithdrawUsesAvailableBalance(t *testing.T) {
 	})
 	service := NewAccountService(accountTestTxManager{}, accounts, &accountTestLedgerRepository{})
 
-	if _, err := service.Withdraw(context.Background(), 1, account.ID, 20); err != nil {
-		t.Fatalf("withdraw available amount: %v", err)
-	}
+	_, err := service.Withdraw(context.Background(), 1, account.ID, 20)
+	require.NoError(t, err)
 
-	updated, _ := accounts.GetByID(context.Background(), account.ID)
-	if updated.Balance != 80 || updated.ReservedAmount != 80 {
-		t.Fatalf("amounts after withdrawal = balance %d reserved %d, want 80/80", updated.Balance, updated.ReservedAmount)
-	}
+	updated, err := accounts.GetByID(context.Background(), account.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(80), updated.Balance)
+	assert.Equal(t, int64(80), updated.ReservedAmount)
 }
 
 type accountTestTxManager struct{}

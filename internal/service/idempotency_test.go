@@ -2,12 +2,13 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/signaturekey/billy/internal/domain/entity"
 	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
@@ -22,15 +23,10 @@ func TestIdempotencyExecutorStoresCompletedResponse(t *testing.T) {
 	result, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
 		return 201, map[string]int{"id": 10}, nil
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Replayed {
-		t.Fatalf("result replayed = true, want false")
-	}
-	if result.StatusCode != 201 || string(result.Body) != `{"id":10}` {
-		t.Fatalf("result = status %d body %s, want 201/{\"id\":10}", result.StatusCode, result.Body)
-	}
+	require.NoError(t, err)
+	assert.False(t, result.Replayed)
+	assert.Equal(t, 201, result.StatusCode)
+	assert.JSONEq(t, `{"id":10}`, string(result.Body))
 }
 
 func TestIdempotencyExecutorReplaysCompletedDuplicate(t *testing.T) {
@@ -44,26 +40,16 @@ func TestIdempotencyExecutorReplaysCompletedDuplicate(t *testing.T) {
 		calls++
 		return 201, map[string]int{"id": 10}, nil
 	})
-	if err != nil {
-		t.Fatalf("first execute: %v", err)
-	}
+	require.NoError(t, err)
 
 	replayed, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
 		calls++
 		return 201, map[string]int{"id": 11}, nil
 	})
-	if err != nil {
-		t.Fatalf("replay execute: %v", err)
-	}
-	if !replayed.Replayed {
-		t.Fatalf("replayed = false, want true")
-	}
-	if calls != 1 {
-		t.Fatalf("mutate calls = %d, want 1", calls)
-	}
-	if string(replayed.Body) != `{"id":10}` {
-		t.Fatalf("replayed body = %s, want first response", replayed.Body)
-	}
+	require.NoError(t, err)
+	assert.True(t, replayed.Replayed)
+	assert.Equal(t, 1, calls)
+	assert.JSONEq(t, `{"id":10}`, string(replayed.Body))
 }
 
 func TestIdempotencyExecutorRejectsSameKeyDifferentHash(t *testing.T) {
@@ -75,16 +61,12 @@ func TestIdempotencyExecutorRejectsSameKeyDifferentHash(t *testing.T) {
 	_, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
 		return 201, map[string]int{"id": 10}, nil
 	})
-	if err != nil {
-		t.Fatalf("first execute: %v", err)
-	}
+	require.NoError(t, err)
 
 	_, err = executor.Execute(context.Background(), 1, "key", "topup", "hash-b", func(context.Context, pgx.Tx) (int, any, error) {
 		return 201, map[string]int{"id": 11}, nil
 	})
-	if !errors.Is(err, domainerrors.ErrIdempotencyKeyConflict) {
-		t.Fatalf("conflicting execute error = %v, want ErrIdempotencyKeyConflict", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrIdempotencyKeyConflict)
 }
 
 func TestIdempotencyExecutorRejectsInProgressDuplicate(t *testing.T) {
@@ -103,9 +85,7 @@ func TestIdempotencyExecutorRejectsInProgressDuplicate(t *testing.T) {
 	_, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
 		return 201, nil, nil
 	})
-	if !errors.Is(err, domainerrors.ErrIdempotencyInProgress) {
-		t.Fatalf("in-progress duplicate error = %v, want ErrIdempotencyInProgress", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrIdempotencyInProgress)
 }
 
 type idempotencyTestTxManager struct{}

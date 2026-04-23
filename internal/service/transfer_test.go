@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/signaturekey/billy/internal/domain/entity"
 	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
@@ -19,9 +20,7 @@ func TestTransferServiceRejectsNonPositiveAmount(t *testing.T) {
 	service := NewTransferService(transferTestTxManager{}, accounts, &transferTestRepository{}, &transferTestLedgerRepository{})
 
 	_, err := service.Create(context.Background(), 1, from.ID, to.ID, 0)
-	if !errors.Is(err, domainerrors.ErrInvalidAmount) {
-		t.Fatalf("transfer zero error = %v, want ErrInvalidAmount", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrInvalidAmount)
 }
 
 func TestTransferServiceRejectsSameAccount(t *testing.T) {
@@ -31,9 +30,7 @@ func TestTransferServiceRejectsSameAccount(t *testing.T) {
 	service := NewTransferService(transferTestTxManager{}, accounts, &transferTestRepository{}, &transferTestLedgerRepository{})
 
 	_, err := service.Create(context.Background(), 1, from.ID, from.ID, 10)
-	if !errors.Is(err, domainerrors.ErrSameAccountTransfer) {
-		t.Fatalf("same account transfer error = %v, want ErrSameAccountTransfer", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrSameAccountTransfer)
 }
 
 func TestTransferServiceRejectsCurrencyMismatch(t *testing.T) {
@@ -45,9 +42,7 @@ func TestTransferServiceRejectsCurrencyMismatch(t *testing.T) {
 	service := NewTransferService(transferTestTxManager{}, accounts, &transferTestRepository{}, &transferTestLedgerRepository{})
 
 	_, err := service.Create(context.Background(), 1, from.ID, to.ID, 10)
-	if !errors.Is(err, domainerrors.ErrCurrencyMismatch) {
-		t.Fatalf("currency mismatch error = %v, want ErrCurrencyMismatch", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrCurrencyMismatch)
 }
 
 func TestTransferServiceRejectsBlockedAccount(t *testing.T) {
@@ -59,9 +54,7 @@ func TestTransferServiceRejectsBlockedAccount(t *testing.T) {
 	service := NewTransferService(transferTestTxManager{}, accounts, &transferTestRepository{}, &transferTestLedgerRepository{})
 
 	_, err := service.Create(context.Background(), 1, from.ID, to.ID, 10)
-	if !errors.Is(err, domainerrors.ErrAccountBlocked) {
-		t.Fatalf("blocked account error = %v, want ErrAccountBlocked", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrAccountBlocked)
 }
 
 func TestTransferServiceRejectsInsufficientAvailableFunds(t *testing.T) {
@@ -73,9 +66,7 @@ func TestTransferServiceRejectsInsufficientAvailableFunds(t *testing.T) {
 	service := NewTransferService(transferTestTxManager{}, accounts, &transferTestRepository{}, &transferTestLedgerRepository{})
 
 	_, err := service.Create(context.Background(), 1, from.ID, to.ID, 10)
-	if !errors.Is(err, domainerrors.ErrInsufficientFunds) {
-		t.Fatalf("insufficient funds error = %v, want ErrInsufficientFunds", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrInsufficientFunds)
 }
 
 func TestTransferServiceRejectsUnauthorizedSourceAccount(t *testing.T) {
@@ -85,9 +76,7 @@ func TestTransferServiceRejectsUnauthorizedSourceAccount(t *testing.T) {
 	service := NewTransferService(transferTestTxManager{}, accounts, &transferTestRepository{}, &transferTestLedgerRepository{})
 
 	_, err := service.Create(context.Background(), 99, from.ID, to.ID, 10)
-	if !errors.Is(err, domainerrors.ErrForbidden) {
-		t.Fatalf("unauthorized source account error = %v, want ErrForbidden", err)
-	}
+	require.ErrorIs(t, err, domainerrors.ErrForbidden)
 }
 
 func TestTransferServiceMovesMoneyAndWritesLedgerEntries(t *testing.T) {
@@ -98,24 +87,18 @@ func TestTransferServiceMovesMoneyAndWritesLedgerEntries(t *testing.T) {
 	service := NewTransferService(transferTestTxManager{}, accounts, &transferTestRepository{}, ledger)
 
 	transfer, err := service.Create(context.Background(), 1, from.ID, to.ID, 25)
-	if err != nil {
-		t.Fatalf("create transfer: %v", err)
-	}
-	if transfer.Status != entity.TransferStatusCompleted {
-		t.Fatalf("transfer status = %q, want completed", transfer.Status)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, entity.TransferStatusCompleted, transfer.Status)
 
-	updatedFrom, _ := accounts.GetByID(context.Background(), from.ID)
-	updatedTo, _ := accounts.GetByID(context.Background(), to.ID)
-	if updatedFrom.Balance != 75 || updatedTo.Balance != 75 {
-		t.Fatalf("balances = from %d to %d, want 75/75", updatedFrom.Balance, updatedTo.Balance)
-	}
-	if len(ledger.events) != 2 {
-		t.Fatalf("ledger entries = %d, want 2", len(ledger.events))
-	}
-	if ledger.events[0].Type != entity.LedgerEntryTypeTransferOut || ledger.events[1].Type != entity.LedgerEntryTypeTransferIn {
-		t.Fatalf("ledger types = %q/%q, want transfer_out/transfer_in", ledger.events[0].Type, ledger.events[1].Type)
-	}
+	updatedFrom, err := accounts.GetByID(context.Background(), from.ID)
+	require.NoError(t, err)
+	updatedTo, err := accounts.GetByID(context.Background(), to.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(75), updatedFrom.Balance)
+	assert.Equal(t, int64(75), updatedTo.Balance)
+	require.Len(t, ledger.events, 2)
+	assert.Equal(t, entity.LedgerEntryTypeTransferOut, ledger.events[0].Type)
+	assert.Equal(t, entity.LedgerEntryTypeTransferIn, ledger.events[1].Type)
 }
 
 func newTransferTestAccounts() (*transferTestAccountRepository, entity.Account, entity.Account) {
