@@ -27,7 +27,7 @@ test:
 	go tool cover -func=coverage.out
 
 test-verbose:
-	go test ./... -race -v
+	go test ./... -v
 
 lint:
 	golangci-lint run ./...
