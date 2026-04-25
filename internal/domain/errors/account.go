@@ -28,4 +28,11 @@ const (
 	ErrNegativeBalance              DomainError = "negative balance"
 	ErrNegativeReservedAmount       DomainError = "negative reserved amount"
 	ErrReservedAmountExceedsBalance DomainError = "reserved amount exceeds balance"
+	ErrUserAlreadyExists            DomainError = "user already exists"
+	ErrUserNotFound                 DomainError = "user not found"
+	ErrInvalidCredentials           DomainError = "invalid credentials"
+	ErrInvalidEmail                 DomainError = "invalid email"
+	ErrWeakPassword                 DomainError = "password too weak"
+	ErrInvalidToken                 DomainError = "invalid token"
+	ErrTokenExpired                 DomainError = "token expired"
 )

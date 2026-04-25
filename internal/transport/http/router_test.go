@@ -7,6 +7,7 @@ import (
 	"errors"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,8 +31,8 @@ func TestRouterAuthContract(t *testing.T) {
 		name   string
 		userID string
 	}{
-		{name: "missing user id"},
-		{name: "invalid user id", userID: "not-int"},
+		{name: "missing token"},
+		{name: "invalid token", userID: "not-int"},
 	}
 
 	for _, tt := range tests {
@@ -41,6 +42,90 @@ func TestRouterAuthContract(t *testing.T) {
 
 			response := server.do(t, stdhttp.MethodGet, "/api/v1/accounts/1", tt.userID, "", nil)
 			assert.Equal(t, stdhttp.StatusUnauthorized, response.Code)
+		})
+	}
+}
+
+func TestRouterAuthEndpointsContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		services   *handlerTestServices
+		method     string
+		path       string
+		token      string
+		body       []byte
+		wantStatus int
+	}{
+		{
+			name:       "register returns 201",
+			method:     stdhttp.MethodPost,
+			path:       "/api/v1/auth/register",
+			body:       []byte(`{"email":"user@example.com","password":"password123"}`),
+			wantStatus: stdhttp.StatusCreated,
+		},
+		{
+			name:       "login returns 200",
+			method:     stdhttp.MethodPost,
+			path:       "/api/v1/auth/login",
+			body:       []byte(`{"email":"user@example.com","password":"password123"}`),
+			wantStatus: stdhttp.StatusOK,
+		},
+		{
+			name:       "refresh returns 200",
+			method:     stdhttp.MethodPost,
+			path:       "/api/v1/auth/refresh",
+			body:       []byte(`{"refresh_token":"refresh-token"}`),
+			wantStatus: stdhttp.StatusOK,
+		},
+		{
+			name:       "login with bad credentials returns 401",
+			services:   &handlerTestServices{auth: &fakeAuthService{loginErr: domainerrors.ErrInvalidCredentials}},
+			method:     stdhttp.MethodPost,
+			path:       "/api/v1/auth/login",
+			body:       []byte(`{"email":"user@example.com","password":"wrong"}`),
+			wantStatus: stdhttp.StatusUnauthorized,
+		},
+		{
+			name:       "register with existing email returns 409",
+			services:   &handlerTestServices{auth: &fakeAuthService{registerErr: domainerrors.ErrUserAlreadyExists}},
+			method:     stdhttp.MethodPost,
+			path:       "/api/v1/auth/register",
+			body:       []byte(`{"email":"user@example.com","password":"password123"}`),
+			wantStatus: stdhttp.StatusConflict,
+		},
+		{
+			name:       "logout requires authentication",
+			method:     stdhttp.MethodPost,
+			path:       "/api/v1/auth/logout",
+			body:       []byte(`{"refresh_token":"refresh-token"}`),
+			wantStatus: stdhttp.StatusUnauthorized,
+		},
+		{
+			name:       "logout returns 200 when authenticated",
+			method:     stdhttp.MethodPost,
+			path:       "/api/v1/auth/logout",
+			token:      "10",
+			body:       []byte(`{"refresh_token":"refresh-token"}`),
+			wantStatus: stdhttp.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			services := tt.services
+			if services == nil {
+				services = &handlerTestServices{}
+			}
+
+			server := newHandlerTestServer(services)
+			response := server.do(t, tt.method, tt.path, tt.token, "", tt.body)
+
+			assert.Equal(t, tt.wantStatus, response.Code)
 		})
 	}
 }
@@ -222,12 +307,17 @@ func newHandlerTestServer(services *handlerTestServices) *handlerTestServer {
 	if services.hold == nil {
 		services.hold = &fakeHoldService{}
 	}
+	if services.auth == nil {
+		services.auth = &fakeAuthService{}
+	}
 	idempotency := passthroughIdempotency{}
 
 	router := NewRouter(
 		transporthandler.NewAccountHandler(services.account, idempotency),
 		transporthandler.NewTransferHandler(services.transfer, idempotency),
 		transporthandler.NewHoldHandler(services.hold, idempotency),
+		transporthandler.NewAuthHandler(services.auth),
+		fakeTokenVerifier{},
 		nil,
 	)
 
@@ -249,7 +339,7 @@ func (server *handlerTestServer) do(
 		request.Header.Set("Content-Type", "application/json")
 	}
 	if userID != "" {
-		request.Header.Set("X-User-ID", userID)
+		request.Header.Set("Authorization", "Bearer "+userID)
 	}
 	if idempotencyKey != "" {
 		request.Header.Set("Idempotency-Key", idempotencyKey)
@@ -272,6 +362,57 @@ type handlerTestServices struct {
 	account  *fakeAccountService
 	transfer *fakeTransferService
 	hold     *fakeHoldService
+	auth     *fakeAuthService
+}
+
+type fakeTokenVerifier struct{}
+
+func (fakeTokenVerifier) ParseAccessToken(token string) (int64, error) {
+	id, err := strconv.ParseInt(token, 10, 64)
+	if err != nil {
+		return 0, domainerrors.ErrInvalidToken
+	}
+	return id, nil
+}
+
+type fakeAuthService struct {
+	registerErr error
+	loginErr    error
+	refreshErr  error
+	logoutErr   error
+}
+
+func (service *fakeAuthService) Register(context.Context, string, string) (entity.User, entity.TokenPair, error) {
+	if service.registerErr != nil {
+		return entity.User{}, entity.TokenPair{}, service.registerErr
+	}
+	return entity.User{ID: 1, Email: "user@example.com"}, testTokenPair(), nil
+}
+
+func (service *fakeAuthService) Login(context.Context, string, string) (entity.TokenPair, error) {
+	if service.loginErr != nil {
+		return entity.TokenPair{}, service.loginErr
+	}
+	return testTokenPair(), nil
+}
+
+func (service *fakeAuthService) Refresh(context.Context, string) (entity.TokenPair, error) {
+	if service.refreshErr != nil {
+		return entity.TokenPair{}, service.refreshErr
+	}
+	return testTokenPair(), nil
+}
+
+func (service *fakeAuthService) Logout(context.Context, string) error {
+	return service.logoutErr
+}
+
+func testTokenPair() entity.TokenPair {
+	return entity.TokenPair{
+		AccessToken:     "access-token",
+		RefreshToken:    "refresh-token",
+		AccessExpiresAt: time.Now().Add(time.Hour),
+	}
 }
 
 type passthroughIdempotency struct{}

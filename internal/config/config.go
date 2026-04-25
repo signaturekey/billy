@@ -10,6 +10,7 @@ import (
 type Config struct {
 	App      AppConfig
 	Database DatabaseConfig
+	Auth     AuthConfig
 }
 
 type AppConfig struct {
@@ -17,6 +18,12 @@ type AppConfig struct {
 	Port    string        `env:"APP_PORT" env-default:"8080"`
 	BaseURL string        `env:"APP_BASE_URL" env-default:"http://localhost:8080"`
 	HoldTTL time.Duration `env:"HOLD_TTL" env-default:"15m"`
+}
+
+type AuthConfig struct {
+	JWTSecret       string        `env:"JWT_SECRET" env-required:"true"`
+	AccessTokenTTL  time.Duration `env:"ACCESS_TOKEN_TTL" env-default:"15m"`
+	RefreshTokenTTL time.Duration `env:"REFRESH_TOKEN_TTL" env-default:"720h"`
 }
 
 type DatabaseConfig struct {

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/signaturekey/billy/internal/config"
+	"github.com/signaturekey/billy/internal/pkg/auth"
 	"github.com/signaturekey/billy/internal/pkg/logger"
 	postgrespkg "github.com/signaturekey/billy/internal/pkg/postgres"
 	"github.com/signaturekey/billy/internal/repository/postgres"
@@ -47,7 +48,7 @@ func main() {
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h, holdExpirer := buildHTTPHandler(db, cfg.App.HoldTTL, log)
+	h, holdExpirer := buildHTTPHandler(db, cfg.App.HoldTTL, cfg.Auth, log)
 	holdExpirationWorker := worker.NewHoldExpirationWorker(
 		holdExpirer,
 		holdExpirationInterval,
@@ -86,10 +87,29 @@ func main() {
 	log.Info("server stopped")
 }
 
-func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration, log *zap.Logger) (http.Handler, worker.HoldExpirer) {
+func buildHTTPHandler(
+	db *pgxpool.Pool,
+	ttl time.Duration,
+	authCfg config.AuthConfig,
+	log *zap.Logger,
+) (http.Handler, worker.HoldExpirer) {
 	txManager := postgres.NewTxManager(db)
 	idempotencyRepository := postgres.NewIdempotencyRepository()
 	idempotencyExecutor := service.NewIdempotencyExecutor(txManager, idempotencyRepository, 0)
+
+	tokenManager := auth.NewManager(authCfg.JWTSecret, authCfg.AccessTokenTTL)
+	passwordHasher := auth.NewPasswordHasher()
+	userRepository := postgres.NewUserRepository(db)
+	refreshTokenRepository := postgres.NewRefreshTokenRepository(db)
+	authService := service.NewAuthService(
+		txManager,
+		userRepository,
+		refreshTokenRepository,
+		tokenManager,
+		passwordHasher,
+		authCfg.RefreshTokenTTL,
+	)
+	authHandler := handler.NewAuthHandler(authService)
 
 	accountRepository := postgres.NewAccountRepository(db)
 	ledgerRepository := postgres.NewLedgerRepository(db)
@@ -114,6 +134,8 @@ func buildHTTPHandler(db *pgxpool.Pool, ttl time.Duration, log *zap.Logger) (htt
 		accountHandler,
 		transferHandler,
 		holdHandler,
+		authHandler,
+		tokenManager,
 		log,
 	)
 	return r.Mount(), holdService

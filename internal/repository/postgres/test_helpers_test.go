@@ -18,6 +18,21 @@ import (
 	"github.com/signaturekey/billy/internal/domain/entity"
 )
 
+func seedIntegrationUser(t *testing.T, pool *pgxpool.Pool, userID int64) {
+	t.Helper()
+
+	_, err := pool.Exec(
+		context.Background(),
+		`INSERT INTO users (id, email, password_hash)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (id) DO NOTHING`,
+		userID,
+		fmt.Sprintf("user%d@example.test", userID),
+		"test-hash",
+	)
+	require.NoError(t, err)
+}
+
 func createIntegrationAccount(
 	t *testing.T,
 	accounts *accountRepository,
@@ -27,6 +42,8 @@ func createIntegrationAccount(
 	reservedAmount int64,
 ) entity.Account {
 	t.Helper()
+
+	seedIntegrationUser(t, accounts.pool, userID)
 
 	account, err := accounts.Create(context.Background(), entity.Account{
 		UserID:         userID,

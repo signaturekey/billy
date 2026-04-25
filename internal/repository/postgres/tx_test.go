@@ -19,6 +19,8 @@ func TestTxManagerCommitsAndRollsBack(t *testing.T) {
 	pool := newIntegrationPool(t)
 	manager := NewTxManager(pool)
 	accounts := NewAccountRepository(pool)
+	seedIntegrationUser(t, pool, 10)
+	seedIntegrationUser(t, pool, 20)
 
 	err := manager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `

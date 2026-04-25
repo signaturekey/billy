@@ -1,25 +1,32 @@
 package middleware
 
 import (
-	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/signaturekey/billy/internal/transport/http/response"
 )
 
+const bearerPrefix = "Bearer "
+
 type currentUserIDKey struct{}
 
-func AuthMiddleware() gin.HandlerFunc {
+type TokenVerifier interface {
+	ParseAccessToken(token string) (int64, error)
+}
+
+func AuthMiddleware(verifier TokenVerifier) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		header := ctx.GetHeader("X-User-ID")
-		if header == "" {
+		header := ctx.GetHeader("Authorization")
+		if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
 			response.Unauthorized(ctx, "unauthorized")
 			ctx.Abort()
 
 			return
 		}
 
-		id, err := strconv.ParseInt(header, 10, 64)
+		raw := strings.TrimSpace(header[len(bearerPrefix):])
+		userID, err := verifier.ParseAccessToken(raw)
 		if err != nil {
 			response.Unauthorized(ctx, "unauthorized")
 			ctx.Abort()
@@ -27,7 +34,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		ctx.Set(currentUserIDKey{}, id)
+		ctx.Set(currentUserIDKey{}, userID)
 		ctx.Next()
 	}
 }

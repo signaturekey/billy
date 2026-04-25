@@ -17,6 +17,7 @@ func TestAccountRepositoryIntegration(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationPool(t)
 	accounts := NewAccountRepository(pool)
+	seedIntegrationUser(t, pool, 10)
 
 	created, err := accounts.Create(ctx, entity.Account{
 		UserID:         10,
@@ -59,6 +60,7 @@ func TestAccountRepositoryRejectsInvalidAmounts(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationPool(t)
 	accounts := NewAccountRepository(pool)
+	seedIntegrationUser(t, pool, 10)
 
 	_, err := accounts.Create(ctx, entity.Account{
 		UserID:         10,

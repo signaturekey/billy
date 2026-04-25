@@ -107,13 +107,24 @@ migrations                      SQL-миграции
 
 ## API
 
-Ниже перечислены основные ручки проекта. Все `/api/v1/*` ручки требуют заголовок:
+Ниже перечислены основные ручки проекта. Все защищенные ручки требуют JWT access-токен в заголовке:
 
 ```http
-X-User-ID: 1
+Authorization: Bearer <access_token>
 ```
 
-Это упрощенная учебная авторизация: пользователь берется из заголовка, полноценной auth-системы в проекте нет.
+Access-токен выдается при регистрации и логине, живет недолго (`ACCESS_TOKEN_TTL`, по умолчанию 15m). Refresh-токен долгоживущий (`REFRESH_TOKEN_TTL`, по умолчанию 30 дней), хранится в БД в виде хеша и ротируется при каждом обновлении.
+
+### Auth
+
+Публичные ручки (не требуют токена):
+
+| Method | Path | Назначение |
+| --- | --- | --- |
+| `POST` | `/api/v1/auth/register` | Регистрация, возвращает пользователя и пару токенов |
+| `POST` | `/api/v1/auth/login` | Логин по email/паролю, возвращает пару токенов |
+| `POST` | `/api/v1/auth/refresh` | Обновить пару токенов по refresh-токену (старый отзывается) |
+| `POST` | `/api/v1/auth/logout` | Отозвать refresh-токен (требует access-токен) |
 
 ### Accounts
 
@@ -247,7 +258,7 @@ available = balance - reserved_amount
 Тесты покрывают основные уровни:
 
 - сервисный слой: бизнес-правила аккаунтов, списаний, переводов, holds и идемпотентности;
-- HTTP-слой: auth-контракт через `X-User-ID`, валидация, маппинг доменных ошибок в HTTP-ответы;
+- HTTP-слой: JWT auth-middleware (Bearer-токен), регистрация/логин/refresh/logout, валидация, маппинг доменных ошибок в HTTP-ответы;
 - PostgreSQL-репозитории: интеграционные проверки SQL, constraints, транзакций и чтения/записи.
 
 Важные проверяемые сценарии:
@@ -324,6 +335,9 @@ make test
 | `APP_PORT` | HTTP-порт | `8080` |
 | `APP_BASE_URL` | Базовый URL приложения | `http://localhost:8080` |
 | `HOLD_TTL` | Время жизни hold | `15m` |
+| `JWT_SECRET` | Секрет для подписи access-токенов (обязательная) | — |
+| `ACCESS_TOKEN_TTL` | Время жизни access-токена | `15m` |
+| `REFRESH_TOKEN_TTL` | Время жизни refresh-токена | `720h` |
 | `DB_HOST` | Хост PostgreSQL | `localhost` |
 | `DB_PORT` | Порт PostgreSQL | `5432` |
 | `DB_USER` | Пользователь PostgreSQL | `postgres` |
@@ -360,12 +374,42 @@ make migrate-create name=add_some_table
 
 Во всех примерах предполагается, что API запущен на `http://localhost:8080`.
 
+### Регистрация
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"password123"}'
+```
+
+### Логин
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"password123"}'
+```
+
+Ответ содержит `access_token` и `refresh_token`. Дальше access-токен подставляется в заголовок `Authorization`, например:
+
+```bash
+TOKEN=<access_token>
+```
+
+### Обновить токены
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token":"<refresh_token>"}'
+```
+
 ### Создать аккаунт
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/accounts \
   -H "Content-Type: application/json" \
-  -H "X-User-ID: 1" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"currency":"USD"}'
 ```
 
@@ -374,7 +418,7 @@ curl -X POST http://localhost:8080/api/v1/accounts \
 ```bash
 curl -X POST http://localhost:8080/api/v1/accounts/1/topups \
   -H "Content-Type: application/json" \
-  -H "X-User-ID: 1" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Idempotency-Key: topup-1" \
   -d '{"amount":10000}'
 ```
@@ -384,7 +428,7 @@ curl -X POST http://localhost:8080/api/v1/accounts/1/topups \
 ```bash
 curl -X POST http://localhost:8080/api/v1/accounts/1/withdrawals \
   -H "Content-Type: application/json" \
-  -H "X-User-ID: 1" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Idempotency-Key: withdrawal-1" \
   -d '{"amount":2500}'
 ```
@@ -394,7 +438,7 @@ curl -X POST http://localhost:8080/api/v1/accounts/1/withdrawals \
 ```bash
 curl -X POST http://localhost:8080/api/v1/transfers \
   -H "Content-Type: application/json" \
-  -H "X-User-ID: 1" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Idempotency-Key: transfer-1" \
   -d '{"from_account_id":1,"to_account_id":2,"amount":3000}'
 ```
@@ -404,7 +448,7 @@ curl -X POST http://localhost:8080/api/v1/transfers \
 ```bash
 curl -X POST http://localhost:8080/api/v1/holds \
   -H "Content-Type: application/json" \
-  -H "X-User-ID: 1" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Idempotency-Key: hold-create-1" \
   -d '{"account_id":1,"amount":1500}'
 ```
@@ -413,7 +457,7 @@ curl -X POST http://localhost:8080/api/v1/holds \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/holds/1/confirm \
-  -H "X-User-ID: 1" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Idempotency-Key: hold-confirm-1"
 ```
 
@@ -421,7 +465,7 @@ curl -X POST http://localhost:8080/api/v1/holds/1/confirm \
 
 ```bash
 curl "http://localhost:8080/api/v1/accounts/1/operations?page=1&limit=20" \
-  -H "X-User-ID: 1"
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Структура проекта
@@ -437,6 +481,7 @@ curl "http://localhost:8080/api/v1/accounts/1/operations?page=1&limit=20" \
 |   |   +-- entity/
 |   |   +-- errors/
 |   +-- pkg/
+|   |   +-- auth/
 |   |   +-- logger/
 |   |   +-- pagination/
 |   |   +-- postgres/
@@ -456,7 +501,6 @@ curl "http://localhost:8080/api/v1/accounts/1/operations?page=1&limit=20" \
 
 ## Что намеренно не реализовано
 
-- Полноценная регистрация, login, JWT/session-based auth.
 - Роли пользователей и admin API.
 - Интеграция с платежными провайдерами.
 - Реальные банковские, юридические или compliance-процессы.
@@ -475,7 +519,7 @@ curl "http://localhost:8080/api/v1/accounts/1/operations?page=1&limit=20" \
 - Добавить OpenAPI-спецификацию.
 - Добавить `/ready` с проверкой подключения к PostgreSQL.
 - Добавить `/metrics` и базовые Prometheus-метрики.
-- Добавить нормальную auth-систему вместо `X-User-ID`.
+- Добавить роли пользователей (RBAC) и admin API поверх текущей JWT-аутентификации.
 - Добавить outbox-паттерн для событий по денежным операциям.
 - Добавить более подробный audit trail для административных действий.
 - Добавить CI pipeline с линтерами, unit и integration tests.

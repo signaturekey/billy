@@ -13,6 +13,8 @@ type Router struct {
 	accountHandler  *handler.AccountHandler
 	transferHandler *handler.TransferHandler
 	holdHandler     *handler.HoldHandler
+	authHandler     *handler.AuthHandler
+	tokenVerifier   middleware.TokenVerifier
 	logger          *zap.Logger
 }
 
@@ -20,6 +22,8 @@ func NewRouter(
 	accountHandler *handler.AccountHandler,
 	transferHandler *handler.TransferHandler,
 	holdHandler *handler.HoldHandler,
+	authHandler *handler.AuthHandler,
+	tokenVerifier middleware.TokenVerifier,
 	logger *zap.Logger,
 ) *Router {
 	if logger == nil {
@@ -30,6 +34,8 @@ func NewRouter(
 		accountHandler:  accountHandler,
 		transferHandler: transferHandler,
 		holdHandler:     holdHandler,
+		authHandler:     authHandler,
+		tokenVerifier:   tokenVerifier,
 		logger:          logger,
 	}
 }
@@ -44,8 +50,14 @@ func (r *Router) Mount() stdhttp.Handler {
 		ctx.JSON(stdhttp.StatusOK, gin.H{"status": "ok"})
 	})
 
+	auth := g.Group("/api/v1/auth")
+	auth.POST("/register", r.authHandler.Register)
+	auth.POST("/login", r.authHandler.Login)
+	auth.POST("/refresh", r.authHandler.Refresh)
+
 	v1 := g.Group("/api/v1")
-	v1.Use(middleware.AuthMiddleware())
+	v1.Use(middleware.AuthMiddleware(r.tokenVerifier))
+	v1.POST("/auth/logout", r.authHandler.Logout)
 	v1.POST("/accounts", r.accountHandler.Create)
 	v1.GET("/accounts/:id", r.accountHandler.GetByID)
 	v1.GET("/accounts/:id/balance", r.accountHandler.GetBalance)
