@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/signaturekey/billy/internal/domain/entity"
-	"github.com/signaturekey/billy/internal/pkg/pagination"
+	"github.com/signaturekey/billy/internal/pagination"
 	"github.com/signaturekey/billy/internal/transport/http/dto"
 	transporterrors "github.com/signaturekey/billy/internal/transport/http/errors"
 	"github.com/signaturekey/billy/internal/transport/http/middleware"

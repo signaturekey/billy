@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -18,7 +19,8 @@ func TestIdempotencyExecutorStoresCompletedResponse(t *testing.T) {
 	t.Parallel()
 
 	keys := newIdempotencyTestRepository()
-	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, time.Hour)
+	cache := newIdempotencyTestCache()
+	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, cache, time.Hour)
 
 	result, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
 		return 201, map[string]int{"id": 10}, nil
@@ -27,13 +29,18 @@ func TestIdempotencyExecutorStoresCompletedResponse(t *testing.T) {
 	assert.False(t, result.Replayed)
 	assert.Equal(t, 201, result.StatusCode)
 	assert.JSONEq(t, `{"id":10}`, string(result.Body))
+
+	cached, ok := cache.records[idempotencyTestRecordKey(1, "key", "topup")]
+	require.True(t, ok)
+	assert.Equal(t, "hash-a", cached.RequestHash)
+	assert.Equal(t, time.Hour, cache.ttl)
 }
 
 func TestIdempotencyExecutorReplaysCompletedDuplicate(t *testing.T) {
 	t.Parallel()
 
 	keys := newIdempotencyTestRepository()
-	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, time.Hour)
+	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, nil, time.Hour)
 
 	calls := 0
 	_, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
@@ -56,7 +63,7 @@ func TestIdempotencyExecutorRejectsSameKeyDifferentHash(t *testing.T) {
 	t.Parallel()
 
 	keys := newIdempotencyTestRepository()
-	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, time.Hour)
+	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, nil, time.Hour)
 
 	_, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
 		return 201, map[string]int{"id": 10}, nil
@@ -80,12 +87,81 @@ func TestIdempotencyExecutorRejectsInProgressDuplicate(t *testing.T) {
 		RequestHash:   "hash-a",
 		Status:        entity.IdempotencyStatusProcessing,
 	}
-	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, time.Hour)
+	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, nil, time.Hour)
 
 	_, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
 		return 201, nil, nil
 	})
 	require.ErrorIs(t, err, domainerrors.ErrIdempotencyInProgress)
+}
+
+func TestIdempotencyExecutorReplaysCachedResponseWithoutDatabase(t *testing.T) {
+	t.Parallel()
+
+	cache := newIdempotencyTestCache()
+	cache.records[idempotencyTestRecordKey(1, "key", "topup")] = entity.IdempotencyKey{
+		UserID:        1,
+		Key:           "key",
+		OperationType: "topup",
+		RequestHash:   "hash-a",
+		Status:        entity.IdempotencyStatusCompleted,
+		ResponseCode:  201,
+		ResponseBody:  []byte(`{"id":10}`),
+	}
+	keys := newIdempotencyTestRepository()
+	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, cache, time.Hour)
+
+	mutated := false
+	result, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
+		mutated = true
+		return 201, nil, nil
+	})
+	require.NoError(t, err)
+	assert.True(t, result.Replayed)
+	assert.False(t, mutated)
+	assert.Empty(t, keys.records)
+	assert.JSONEq(t, `{"id":10}`, string(result.Body))
+}
+
+func TestIdempotencyExecutorRejectsCachedResponseForDifferentRequest(t *testing.T) {
+	t.Parallel()
+
+	cache := newIdempotencyTestCache()
+	cache.records[idempotencyTestRecordKey(1, "key", "topup")] = entity.IdempotencyKey{
+		UserID:        1,
+		Key:           "key",
+		OperationType: "topup",
+		RequestHash:   "hash-a",
+		Status:        entity.IdempotencyStatusCompleted,
+	}
+	executor := NewIdempotencyExecutor(
+		idempotencyTestTxManager{},
+		newIdempotencyTestRepository(),
+		cache,
+		time.Hour,
+	)
+
+	_, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-b", func(context.Context, pgx.Tx) (int, any, error) {
+		return 201, nil, nil
+	})
+	require.ErrorIs(t, err, domainerrors.ErrIdempotencyKeyConflict)
+}
+
+func TestIdempotencyExecutorFallsBackWhenCacheIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	cache := newIdempotencyTestCache()
+	cache.getErr = errors.New("redis unavailable")
+	cache.setErr = errors.New("redis unavailable")
+	keys := newIdempotencyTestRepository()
+	executor := NewIdempotencyExecutor(idempotencyTestTxManager{}, keys, cache, time.Hour)
+
+	result, err := executor.Execute(context.Background(), 1, "key", "topup", "hash-a", func(context.Context, pgx.Tx) (int, any, error) {
+		return 201, map[string]int{"id": 10}, nil
+	})
+	require.NoError(t, err)
+	assert.False(t, result.Replayed)
+	assert.Len(t, keys.records, 1)
 }
 
 type idempotencyTestTxManager struct{}
@@ -96,6 +172,48 @@ func (idempotencyTestTxManager) WithTx(ctx context.Context, fn func(context.Cont
 
 type idempotencyTestRepository struct {
 	records map[string]entity.IdempotencyKey
+}
+
+type idempotencyTestCache struct {
+	records map[string]entity.IdempotencyKey
+	getErr  error
+	setErr  error
+	ttl     time.Duration
+}
+
+func newIdempotencyTestCache() *idempotencyTestCache {
+	return &idempotencyTestCache{records: make(map[string]entity.IdempotencyKey)}
+}
+
+func (cache *idempotencyTestCache) Get(
+	_ context.Context,
+	userID int64,
+	key string,
+	operationType string,
+) (entity.IdempotencyKey, error) {
+	if cache.getErr != nil {
+		return entity.IdempotencyKey{}, cache.getErr
+	}
+
+	record, ok := cache.records[idempotencyTestRecordKey(userID, key, operationType)]
+	if !ok {
+		return entity.IdempotencyKey{}, domainerrors.ErrIdempotencyNotFound
+	}
+	return record, nil
+}
+
+func (cache *idempotencyTestCache) Set(
+	_ context.Context,
+	record entity.IdempotencyKey,
+	ttl time.Duration,
+) error {
+	if cache.setErr != nil {
+		return cache.setErr
+	}
+
+	cache.records[idempotencyTestRecordKey(record.UserID, record.Key, record.OperationType)] = record
+	cache.ttl = ttl
+	return nil
 }
 
 func newIdempotencyTestRepository() *idempotencyTestRepository {

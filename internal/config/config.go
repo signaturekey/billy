@@ -11,6 +11,7 @@ type Config struct {
 	App      AppConfig
 	Database DatabaseConfig
 	Auth     AuthConfig
+	Redis    RedisConfig
 }
 
 type AppConfig struct {
@@ -24,6 +25,13 @@ type AuthConfig struct {
 	JWTSecret       string        `env:"JWT_SECRET" env-required:"true"`
 	AccessTokenTTL  time.Duration `env:"ACCESS_TOKEN_TTL" env-default:"15m"`
 	RefreshTokenTTL time.Duration `env:"REFRESH_TOKEN_TTL" env-default:"720h"`
+}
+
+type RedisConfig struct {
+	URL          string        `env:"REDIS_URL" env-default:"redis://localhost:6379/0"`
+	DialTimeout  time.Duration `env:"REDIS_DIAL_TIMEOUT" env-default:"500ms"`
+	ReadTimeout  time.Duration `env:"REDIS_READ_TIMEOUT" env-default:"500ms"`
+	WriteTimeout time.Duration `env:"REDIS_WRITE_TIMEOUT" env-default:"500ms"`
 }
 
 type DatabaseConfig struct {

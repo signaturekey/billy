@@ -16,10 +16,10 @@ GOOSE       := goose -dir $(MIGRATIONS) postgres "$(DB_URL)"
 build:
 	@echo "Building $(APP_NAME)..."
 	@mkdir -p $(BINARY_DIR)
-	go build -ldflags="-s -w" -o $(BINARY) ./cmd/api
+	go build -ldflags="-s -w" -o $(BINARY) ./cmd/billy
 
 run:
-	go run ./cmd/api
+	go run ./cmd/billy
 
 # Quality
 test:

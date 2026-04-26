@@ -10,6 +10,13 @@ services:
       APP_PORT: ${APP_PORT}
       APP_BASE_URL: ${APP_BASE_URL}
       HOLD_TTL: ${HOLD_TTL}
+      JWT_SECRET: ${JWT_SECRET}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_DIAL_TIMEOUT: ${REDIS_DIAL_TIMEOUT}
+      REDIS_READ_TIMEOUT: ${REDIS_READ_TIMEOUT}
+      REDIS_WRITE_TIMEOUT: ${REDIS_WRITE_TIMEOUT}
       DB_HOST: db
       DB_PORT: 5432
       DB_USER: ${DB_USER}
@@ -49,6 +56,21 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  redis:
+    image: redis:8.10.0-alpine
+    container_name: billy-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT}:6379"
+    networks:
+      - billy-backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
 volumes:
   db-data:

@@ -34,9 +34,20 @@ type IdempotencyRepository interface {
 	) error
 }
 
+type IdempotencyCache interface {
+	Get(
+		ctx context.Context,
+		userID int64,
+		key string,
+		operationType string,
+	) (entity.IdempotencyKey, error)
+	Set(ctx context.Context, record entity.IdempotencyKey, ttl time.Duration) error
+}
+
 type IdempotencyExecutor struct {
 	txManager TxManager
 	keys      IdempotencyRepository
+	cache     IdempotencyCache
 	ttl       time.Duration
 }
 
@@ -51,6 +62,7 @@ type IdempotentMutation func(ctx context.Context, tx pgx.Tx) (int, any, error)
 func NewIdempotencyExecutor(
 	txManager TxManager,
 	keys IdempotencyRepository,
+	cache IdempotencyCache,
 	ttl time.Duration,
 ) *IdempotencyExecutor {
 	if ttl <= 0 {
@@ -60,6 +72,7 @@ func NewIdempotencyExecutor(
 	return &IdempotencyExecutor{
 		txManager: txManager,
 		keys:      keys,
+		cache:     cache,
 		ttl:       ttl,
 	}
 }
@@ -72,6 +85,10 @@ func (executor *IdempotencyExecutor) Execute(
 	requestHash string,
 	mutate IdempotentMutation,
 ) (IdempotencyResult, error) {
+	if cached, found, err := executor.getCached(ctx, userID, key, operationType, requestHash); found || err != nil {
+		return cached, err
+	}
+
 	var result IdempotencyResult
 	err := executor.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		err := executor.keys.CreateProcessing(ctx, tx, entity.IdempotencyKey{
@@ -132,5 +149,57 @@ func (executor *IdempotencyExecutor) Execute(
 		return IdempotencyResult{}, err
 	}
 
+	executor.cacheCompleted(ctx, userID, key, operationType, requestHash, result)
+
 	return result, nil
+}
+
+func (executor *IdempotencyExecutor) getCached(
+	ctx context.Context,
+	userID int64,
+	key string,
+	operationType string,
+	requestHash string,
+) (IdempotencyResult, bool, error) {
+	if executor.cache == nil {
+		return IdempotencyResult{}, false, nil
+	}
+
+	cached, err := executor.cache.Get(ctx, userID, key, operationType)
+	if err != nil || cached.Status != entity.IdempotencyStatusCompleted {
+		return IdempotencyResult{}, false, nil
+	}
+
+	if cached.RequestHash != requestHash {
+		return IdempotencyResult{}, true, domainerrors.ErrIdempotencyKeyConflict
+	}
+
+	return IdempotencyResult{
+		StatusCode: cached.ResponseCode,
+		Body:       cached.ResponseBody,
+		Replayed:   true,
+	}, true, nil
+}
+
+func (executor *IdempotencyExecutor) cacheCompleted(
+	ctx context.Context,
+	userID int64,
+	key string,
+	operationType string,
+	requestHash string,
+	result IdempotencyResult,
+) {
+	if executor.cache == nil {
+		return
+	}
+
+	_ = executor.cache.Set(ctx, entity.IdempotencyKey{
+		UserID:        userID,
+		Key:           key,
+		OperationType: operationType,
+		RequestHash:   requestHash,
+		Status:        entity.IdempotencyStatusCompleted,
+		ResponseCode:  result.StatusCode,
+		ResponseBody:  result.Body,
+	}, executor.ttl)
 }

@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/signaturekey/billy/internal/auth"
 	"github.com/signaturekey/billy/internal/domain/entity"
 	domainerrors "github.com/signaturekey/billy/internal/domain/errors"
-	"github.com/signaturekey/billy/internal/pkg/auth"
 )
 
 func newAuthTestService(t *testing.T) (*authService, *userTestRepository, *refreshTokenTestRepository, *auth.Manager) {

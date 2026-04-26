@@ -11,10 +11,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/signaturekey/billy/internal/auth"
+	"github.com/signaturekey/billy/internal/cache"
 	"github.com/signaturekey/billy/internal/config"
-	"github.com/signaturekey/billy/internal/pkg/auth"
-	"github.com/signaturekey/billy/internal/pkg/logger"
-	postgrespkg "github.com/signaturekey/billy/internal/pkg/postgres"
+	"github.com/signaturekey/billy/internal/logger"
+	postgrespkg "github.com/signaturekey/billy/internal/postgres"
 	"github.com/signaturekey/billy/internal/repository/postgres"
 	"github.com/signaturekey/billy/internal/service"
 	transporthttp "github.com/signaturekey/billy/internal/transport/http"
@@ -45,10 +46,25 @@ func main() {
 	}
 	defer db.Close()
 
+	redisClient, err := cache.NewRedisClient(cfg.Redis)
+	if err != nil {
+		log.Error("redis configuration failed", zap.Error(err))
+		_ = log.Sync()
+		os.Exit(1)
+	}
+	defer func() {
+		_ = redisClient.Close()
+	}()
+
+	if err := redisClient.Ping(startupCtx).Err(); err != nil {
+		log.Warn("redis unavailable; idempotency cache disabled until recovery", zap.Error(err))
+	}
+	idempotencyCache := cache.NewIdempotencyCache(redisClient)
+
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	h, holdExpirer := buildHTTPHandler(db, cfg.App.HoldTTL, cfg.Auth, log)
+	h, holdExpirer := buildHTTPHandler(db, idempotencyCache, cfg.App.HoldTTL, cfg.Auth, log)
 	holdExpirationWorker := worker.NewHoldExpirationWorker(
 		holdExpirer,
 		holdExpirationInterval,
@@ -89,13 +105,14 @@ func main() {
 
 func buildHTTPHandler(
 	db *pgxpool.Pool,
+	idempotencyCache service.IdempotencyCache,
 	ttl time.Duration,
 	authCfg config.AuthConfig,
 	log *zap.Logger,
 ) (http.Handler, worker.HoldExpirer) {
 	txManager := postgres.NewTxManager(db)
 	idempotencyRepository := postgres.NewIdempotencyRepository()
-	idempotencyExecutor := service.NewIdempotencyExecutor(txManager, idempotencyRepository, 0)
+	idempotencyExecutor := service.NewIdempotencyExecutor(txManager, idempotencyRepository, idempotencyCache, 0)
 
 	tokenManager := auth.NewManager(authCfg.JWTSecret, authCfg.AccessTokenTTL)
 	passwordHasher := auth.NewPasswordHasher()

@@ -1,360 +1,289 @@
 # Billy
 
-Billy - учебный Go backend-сервис для аккаунтов, балансов и денежных операций.
+Billy — учебный платёжный backend на Go. Сервис управляет счетами, переводами и
+холдами, хранит денежную историю в PostgreSQL и защищает мутации транзакциями,
+блокировками строк и идемпотентными ключами. Redis ускоряет повторную выдачу
+завершённых идемпотентных ответов.
 
-Проект не имитирует настоящий банк и не претендует на production fintech. Его цель - показать базовые backend-навыки на понятной доменной модели: слои приложения, PostgreSQL, транзакции, блокировки строк, идемпотентность, историю операций, background worker, тесты и простую наблюдаемость.
+Все суммы хранятся в целых минимальных единицах валюты. Авторизация построена на
+короткоживущих JWT access-токенах и ротируемых opaque refresh-токенах.
 
-## Какую задачу решает проект
+<a id="navigation"></a>
 
-Billy хранит аккаунты пользователей и позволяет выполнять операции с балансом:
+## Навигация
 
-- создавать аккаунты в валюте;
-- пополнять баланс;
-- списывать доступные средства;
-- переводить деньги между аккаунтами;
-- резервировать средства через holds;
-- подтверждать, отменять и автоматически протухать holds;
-- смотреть историю операций по аккаунту.
+- [Архитектура](#architecture)
+- [Структура репозитория](#structure)
+- [Быстрый старт](#quick-start)
+- [HTTP API](#api)
+- [Денежные операции](#money)
+- [Авторизация](#authentication)
+- [Конфигурация](#configuration)
+- [Миграции](#migrations)
+- [Тесты и проверки](#testing)
+- [Команды разработки](#development)
+- [Ограничения](#limitations)
 
-Домен специально небольшой, чтобы сфокусироваться не на количестве функций, а на корректности денежных изменений и границах ответственности между слоями.
-
-## Возможности
-
-- HTTP API на Gin.
-- PostgreSQL как основное хранилище.
-- Работа с БД через `pgx/v5`, без ORM и без `sqlc`.
-- Транзакции для всех денежных мутаций.
-- `SELECT ... FOR UPDATE` для блокировки аккаунтов при изменении баланса.
-- Ledger-таблица для истории операций.
-- Идемпотентность денежных мутаций через `Idempotency-Key`.
-- Holds с жизненным циклом `pending -> confirmed | cancelled | expired`.
-- Background worker для истечения просроченных holds.
-- Структурные логи через `zap`.
-- Unit-тесты сервисного слоя, HTTP-контрактов и интеграционные тесты PostgreSQL-репозиториев.
-
-## Стек
-
-- Go
-- Gin
-- PostgreSQL
-- `pgx/v5`
-- Docker Compose
-- Goose migrations
-- Zap logger
-- Testify
-
-Redis в текущей версии проекта не используется.
+<a id="architecture"></a>
 
 ## Архитектура
 
-Проект сделан как модульный слоистый монолит:
+Billy использует явное разделение HTTP, прикладной логики и хранения данных:
 
 ```text
-cmd/api                         composition root и запуск HTTP-сервера
-internal/config                 загрузка конфигурации
-internal/domain/entity          доменные сущности и статусы
-internal/domain/errors          доменные ошибки
-internal/transport/http         router, handlers, DTO, middleware, HTTP responses
-internal/service                use cases и бизнес-правила
-internal/repository/postgres    PostgreSQL-репозитории
-internal/worker                 фоновые задачи
-internal/pkg/postgres           подключение к PostgreSQL
-internal/pkg/logger             настройка логгера
-internal/pkg/pagination         параметры пагинации
-migrations                      SQL-миграции
+HTTP -> service -> domain
+          |
+          ├── repository/postgres -> PostgreSQL
+          └── cache               -> Redis
 ```
 
-`cmd/api` собирает зависимости вручную: создает подключение к БД, репозитории, сервисы, handlers, router и worker. Тяжелые framework-подходы, ORM и генерация SQL-кода здесь намеренно не используются, чтобы было видно, где проходят транзакционные границы и какие SQL-запросы выполняются.
+| Компонент             | Ответственность                                                |
+| --------------------- | ------------------------------------------------------------- |
+| `transport/http`      | Router, handlers, middleware, DTO и mapping ошибок             |
+| `service`             | Прикладные сценарии, проверки прав и денежные инварианты       |
+| `domain`              | Сущности и доменные ошибки                                     |
+| `cache`               | Best-effort Redis-кэш завершённых идемпотентных ответов        |
+| `repository/postgres` | SQL-запросы, транзакции и блокировки                           |
+| `worker`              | Фоновое истечение просроченных холдов                          |
+| `cmd/billy`           | Сборка зависимостей, запуск HTTP-сервера и graceful shutdown   |
 
-## Доменная модель
+Сервисы зависят от узких repository-интерфейсов, а реализации собираются вручную в
+`cmd/billy/main.go`. ORM, DI-контейнер и генерация SQL намеренно не используются:
+транзакционные границы и выполняемые запросы остаются явными.
 
-Основные сущности:
+### Стек
 
-- `accounts` - аккаунт пользователя в валюте, хранит `balance`, `reserved_amount` и статус.
-- `ledger_entries` - история операций по аккаунту с балансом до и после операции.
-- `transfers` - переводы между двумя аккаунтами.
-- `holds` - резервирование средств с временем истечения.
-- `idempotency_keys` - сохраненные результаты денежных мутаций для безопасных повторов.
+| Инструмент         | Роль                                                       |
+| ------------------ | ---------------------------------------------------------- |
+| Go 1.25            | API-бинарник и фоновый worker                              |
+| Gin                | HTTP router и middleware                                   |
+| pgx / pgxpool      | PostgreSQL, явные SQL-запросы и транзакции                 |
+| Redis + go-redis   | Кэш завершённых идемпотентных ответов                       |
+| Goose              | Версионирование SQL-миграций                               |
+| cleanenv           | Конфигурация из `.env` и переменных окружения              |
+| JWT + bcrypt       | Access-токены и хеширование паролей                        |
+| zap                | Структурные логи                                            |
+| Testify            | Unit- и integration-тесты                                  |
 
-Типы ledger-записей:
+<a id="structure"></a>
 
-- `topup`
-- `withdrawal`
-- `transfer_in`
-- `transfer_out`
-- `hold_created`
-- `hold_confirmed`
-- `hold_cancelled`
-- `hold_expired`
-
-## Денежные инварианты
-
-В проекте деньги хранятся в integer minor units: например, `1000` означает 1000 минимальных единиц валюты. `float` не используется.
-
-Основные правила:
-
-- баланс аккаунта не может быть отрицательным;
-- зарезервированная сумма не может быть отрицательной;
-- `reserved_amount` не может быть больше `balance`;
-- доступный баланс считается как `balance - reserved_amount`;
-- списание и перевод проверяют именно доступный баланс;
-- сумма операции должна быть положительной;
-- валюта аккаунта нормализуется к трехбуквенному uppercase-коду;
-- перевод между аккаунтами с разной валютой запрещен;
-- перевод на тот же аккаунт запрещен.
-
-Часть инвариантов проверяется в сервисном слое, часть дополнительно закреплена CHECK constraints в PostgreSQL.
-
-## API
-
-Ниже перечислены основные ручки проекта. Все защищенные ручки требуют JWT access-токен в заголовке:
-
-```http
-Authorization: Bearer <access_token>
-```
-
-Access-токен выдается при регистрации и логине, живет недолго (`ACCESS_TOKEN_TTL`, по умолчанию 15m). Refresh-токен долгоживущий (`REFRESH_TOKEN_TTL`, по умолчанию 30 дней), хранится в БД в виде хеша и ротируется при каждом обновлении.
-
-### Auth
-
-Публичные ручки (не требуют токена):
-
-| Method | Path | Назначение |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/register` | Регистрация, возвращает пользователя и пару токенов |
-| `POST` | `/api/v1/auth/login` | Логин по email/паролю, возвращает пару токенов |
-| `POST` | `/api/v1/auth/refresh` | Обновить пару токенов по refresh-токену (старый отзывается) |
-| `POST` | `/api/v1/auth/logout` | Отозвать refresh-токен (требует access-токен) |
-
-### Accounts
-
-| Method | Path | Назначение |
-| --- | --- | --- |
-| `POST` | `/api/v1/accounts` | Создать аккаунт |
-| `GET` | `/api/v1/accounts/:id` | Получить аккаунт |
-| `GET` | `/api/v1/accounts/:id/balance` | Получить баланс аккаунта |
-
-### Money operations
-
-| Method | Path | Назначение |
-| --- | --- | --- |
-| `POST` | `/api/v1/accounts/:id/topups` | Пополнить аккаунт |
-| `POST` | `/api/v1/accounts/:id/withdrawals` | Списать средства |
-
-### Transfers
-
-| Method | Path | Назначение |
-| --- | --- | --- |
-| `POST` | `/api/v1/transfers` | Перевести средства между аккаунтами |
-
-### Holds
-
-| Method | Path | Назначение |
-| --- | --- | --- |
-| `POST` | `/api/v1/holds` | Создать hold и зарезервировать средства |
-| `POST` | `/api/v1/holds/:id/confirm` | Подтвердить hold и списать средства |
-| `POST` | `/api/v1/holds/:id/cancel` | Отменить hold и снять резерв |
-
-### Operations history
-
-| Method | Path | Назначение |
-| --- | --- | --- |
-| `GET` | `/api/v1/accounts/:id/operations?page=1&limit=20` | Получить историю операций |
-
-Пагинация использует `page` и `limit`. По умолчанию `page=1`, `limit=20`, максимальный `limit=100`.
-
-### Health
-
-| Method | Path | Назначение |
-| --- | --- | --- |
-| `GET` | `/health` | Простая health-проверка сервиса |
-
-Отдельные `/ready` и `/metrics` эндпоинты в текущей версии не реализованы.
-
-## Идемпотентность
-
-Денежные мутации требуют заголовок:
-
-```http
-Idempotency-Key: some-unique-key
-```
-
-Идемпотентность применяется к:
-
-- topup;
-- withdrawal;
-- transfer;
-- create hold;
-- confirm hold;
-- cancel hold.
-
-Для ключа сохраняются `user_id`, тип операции, hash запроса, статус обработки и готовый HTTP-ответ. Если тот же пользователь повторяет тот же запрос с тем же ключом, сервис возвращает сохраненный ответ и не выполняет денежную мутацию повторно.
-
-Если тот же ключ используется для другого payload в рамках того же типа операции, сервис возвращает конфликт. Если запрос с таким ключом еще обрабатывается, сервис тоже возвращает конфликт.
-
-## Транзакции и блокировки
-
-Все операции, меняющие деньги, выполняются внутри PostgreSQL-транзакции.
-
-Для изменения аккаунта репозиторий получает строку через `SELECT ... FOR UPDATE`. Это защищает баланс и reserved amount от гонок при параллельных запросах.
-
-Перевод блокирует оба аккаунта в стабильном порядке по `account_id`. Это снижает риск deadlock при встречных переводах, когда два запроса пытаются заблокировать одни и те же аккаунты в разном порядке.
-
-Ledger-записи пишутся в той же транзакции, что и изменение баланса. Поэтому история операций не расходится с фактическим состоянием аккаунта.
-
-## Жизненный цикл hold
-
-Hold резервирует часть доступного баланса:
+## Структура репозитория
 
 ```text
-available = balance - reserved_amount
+├── cmd/billy/                       точка входа и composition root
+├── internal/
+│   ├── auth/                        JWT, bcrypt и refresh-токены
+│   ├── cache/                       Redis client и idempotency cache
+│   ├── config/                      загрузка конфигурации
+│   ├── domain/
+│   │   ├── entity/                  доменные модели
+│   │   └── errors/                  доменные ошибки
+│   ├── logger/                      настройка zap
+│   ├── pagination/                  разбор page/limit
+│   ├── postgres/                    создание пула подключений
+│   ├── repository/postgres/         PostgreSQL-репозитории и TxManager
+│   ├── service/                     прикладные сценарии и бизнес-правила
+│   ├── transport/http/              router, handlers, middleware и DTO
+│   └── worker/                      фоновая обработка холдов
+├── migrations/                      SQL-миграции Goose
+├── .env.example                     пример локальной конфигурации
+├── docker-compose.yml               PostgreSQL, Redis и API
+├── Dockerfile
+└── Makefile
 ```
 
-Создание hold:
+Все прикладные пакеты находятся под `internal`: Billy — сервис, а не библиотека, и
+не публикует стабильный Go API для внешних модулей.
 
-- проверяет владельца аккаунта и активный статус;
-- проверяет доступный баланс;
-- увеличивает `reserved_amount`;
-- создает запись `holds` со статусом `pending`;
-- пишет ledger-запись `hold_created`.
+<a id="quick-start"></a>
 
-Подтверждение hold:
+## Быстрый старт
 
-- возможно только для `pending`;
-- запрещено после `expires_at`;
-- уменьшает `balance`;
-- уменьшает `reserved_amount`;
-- переводит hold в `confirmed`;
-- пишет `hold_confirmed`.
+### Требования
 
-Отмена hold:
+- Go 1.25.5 или новее;
+- Docker с Compose plugin;
+- Goose в `PATH` для применения миграций.
 
-- возможна только для `pending`;
-- уменьшает `reserved_amount`;
-- переводит hold в `cancelled`;
-- пишет `hold_cancelled`.
-
-Истечение hold:
-
-- background worker периодически ищет просроченные `pending` holds;
-- снимает резерв;
-- переводит hold в `expired`;
-- пишет `hold_expired`.
-
-## Наблюдаемость
-
-В проекте есть базовая наблюдаемость:
-
-- структурные логи через `zap`;
-- middleware для request id;
-- logging middleware для HTTP-запросов;
-- recovery middleware для обработки panic;
-- `/health` для простой проверки живости процесса.
-
-Метрики Prometheus и readiness-check пока не добавлены.
-
-## Тесты
-
-Тесты покрывают основные уровни:
-
-- сервисный слой: бизнес-правила аккаунтов, списаний, переводов, holds и идемпотентности;
-- HTTP-слой: JWT auth-middleware (Bearer-токен), регистрация/логин/refresh/logout, валидация, маппинг доменных ошибок в HTTP-ответы;
-- PostgreSQL-репозитории: интеграционные проверки SQL, constraints, транзакций и чтения/записи.
-
-Важные проверяемые сценарии:
-
-- topup;
-- withdrawal;
-- transfer;
-- holds;
-- idempotency replay и конфликты ключей;
-- auth/error mapping.
-
-Проект не заявляет 100% coverage. Интеграционные тесты PostgreSQL запускаются только при наличии `TEST_POSTGRES_DSN`; без него они пропускаются.
-
-## Локальный запуск
-
-1. Скопировать переменные окружения:
+Подготовить окружение, PostgreSQL и Redis:
 
 ```bash
 cp .env.example .env
-```
-
-2. Поднять инфраструктуру:
-
-```bash
-docker compose up -d
-```
-
-или через Makefile:
-
-```bash
-make docker-up
-```
-
-3. Применить миграции:
-
-```bash
+docker compose up -d db redis
 make migrate-up
 ```
 
-Команда использует `goose`, поэтому он должен быть установлен локально.
-
-4. Запустить API:
+Запустить API в Docker:
 
 ```bash
-go run ./cmd/api
+docker compose up -d --build api
 ```
 
-или:
+Или запустить его локально:
 
 ```bash
 make run
 ```
 
-5. Запустить тесты:
+Проверить процесс:
 
 ```bash
-go test ./...
+curl http://localhost:8080/health
 ```
 
-или:
+Ожидаемый ответ:
 
-```bash
-make test
+```json
+{"status":"ok"}
 ```
 
-## Переменные окружения
+API слушает `APP_PORT`, по умолчанию `8080`. Миграции применяются отдельно: ни
+бинарник, ни Docker image не изменяют схему базы данных при старте.
 
-Основные переменные берутся из `.env` или окружения:
+<a id="api"></a>
 
-| Переменная | Назначение | Значение по умолчанию |
-| --- | --- | --- |
-| `APP_NAME` | Имя приложения для сборки через Makefile | `billy` в `.env.example` |
-| `APP_ENV` | Окружение приложения | `development` |
-| `APP_PORT` | HTTP-порт | `8080` |
-| `APP_BASE_URL` | Базовый URL приложения | `http://localhost:8080` |
-| `HOLD_TTL` | Время жизни hold | `15m` |
-| `JWT_SECRET` | Секрет для подписи access-токенов (обязательная) | — |
-| `ACCESS_TOKEN_TTL` | Время жизни access-токена | `15m` |
-| `REFRESH_TOKEN_TTL` | Время жизни refresh-токена | `720h` |
-| `DB_HOST` | Хост PostgreSQL | `localhost` |
-| `DB_PORT` | Порт PostgreSQL | `5432` |
-| `DB_USER` | Пользователь PostgreSQL | `postgres` |
-| `DB_PASSWORD` | Пароль PostgreSQL | `postgres` |
-| `DB_NAME` | Имя БД | `billy_db` |
-| `DB_SSL_MODE` | SSL mode для PostgreSQL | `disable` |
-| `DB_MAX_CONNS` | Максимум соединений в pool | `25` |
-| `DB_MIN_CONNS` | Минимум соединений в pool | `10` |
-| `DB_MAX_CONN_LIFETIME` | Max lifetime соединения | `5m` |
-| `DB_MAX_CONN_IDLE_TIME` | Max idle time соединения | `30m` |
-| `DB_HEALTH_CHECK_PERIOD` | Период health-check pool | `1m` |
+## HTTP API
+
+Healthcheck находится вне версионированного API. Остальные маршруты используют
+префикс `/api/v1`.
+
+| Метод | Маршрут                             | Доступ   | Назначение                     |
+| ----- | ----------------------------------- | -------- | ------------------------------ |
+| GET   | `/health`                           | публично | Проверка процесса              |
+| POST  | `/api/v1/auth/register`             | публично | Регистрация                    |
+| POST  | `/api/v1/auth/login`                | публично | Вход                           |
+| POST  | `/api/v1/auth/refresh`              | публично | Ротация пары токенов           |
+| POST  | `/api/v1/auth/logout`               | auth     | Отзыв refresh-токена           |
+| POST  | `/api/v1/accounts`                  | auth     | Создание счёта                 |
+| GET   | `/api/v1/accounts/{id}`             | auth     | Получение счёта                |
+| GET   | `/api/v1/accounts/{id}/balance`     | auth     | Баланс и доступная сумма       |
+| GET   | `/api/v1/accounts/{id}/operations`  | auth     | История операций               |
+| POST  | `/api/v1/accounts/{id}/topups`      | auth     | Пополнение                     |
+| POST  | `/api/v1/accounts/{id}/withdrawals` | auth     | Списание                       |
+| POST  | `/api/v1/transfers`                 | auth     | Перевод между счетами          |
+| POST  | `/api/v1/holds`                     | auth     | Создание холда                 |
+| POST  | `/api/v1/holds/{id}/confirm`        | auth     | Подтверждение холда            |
+| POST  | `/api/v1/holds/{id}/cancel`         | auth     | Отмена холда                   |
+
+Защищённые маршруты ожидают заголовок:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Пополнение, списание, перевод и все мутации холдов также требуют:
+
+```http
+Idempotency-Key: <unique-key>
+```
+
+История операций поддерживает `page` и `limit`. Значения по умолчанию — `1` и `20`,
+максимальный `limit` — `100`.
+
+<a id="money"></a>
+
+## Денежные операции
+
+### Инварианты
+
+- суммы хранятся в `BIGINT`, без `float`;
+- сумма операции должна быть положительной;
+- `balance` и `reserved_amount` не могут быть отрицательными;
+- `reserved_amount` не может превышать `balance`;
+- доступная сумма равна `balance - reserved_amount`;
+- перевод между разными валютами и перевод на тот же счёт запрещены;
+- владелец счёта определяется по access-токену, а не по телу запроса.
+
+PostgreSQL дублирует критичные проверки через `CHECK` constraints. Денежная мутация
+и запись в ledger коммитятся в одной транзакции.
+
+### Транзакции и блокировки
+
+Списание и изменение резерва читают счёт через `SELECT ... FOR UPDATE`. Перевод
+блокирует оба счёта по возрастанию `account_id`, чтобы встречные переводы брали
+блокировки в одинаковом порядке.
+
+Ledger сохраняет `balance_before` и `balance_after`. Изменение баланса и запись
+истории либо проходят вместе, либо вместе откатываются.
+
+### Идемпотентность
+
+Ключ идентифицируется комбинацией пользователя, типа операции и значения
+`Idempotency-Key`. Для него сохраняются хеш запроса, статус и готовый HTTP-ответ.
+
+| Повторный запрос                           | Результат                        |
+| ----------------------------------------- | -------------------------------- |
+| Тот же ключ и payload, операция завершена | Возвращается сохранённый ответ   |
+| Тот же ключ, другой payload               | Конфликт ключа                   |
+| Операция с этим ключом ещё выполняется    | Конфликт незавершённой обработки |
+
+Запись ключа и сама денежная мутация выполняются в одной PostgreSQL-транзакции.
+После её коммита готовый ответ best-effort сохраняется в Redis на 24 часа. Cache hit
+не открывает транзакцию; при cache miss, повреждённом значении или недоступности
+Redis сервис прозрачно использует PostgreSQL как источник истины.
+
+### Холды
+
+Создание холда увеличивает `reserved_amount`. Подтверждение уменьшает баланс и
+резерв, отмена снимает только резерв. Фоновый worker раз в 10 секунд обрабатывает до
+100 просроченных `pending`-холдов и переводит их в `expired`.
+
+Каждый переход повторно проверяет статус под блокировкой, поэтому подтверждение и
+автоматическое истечение не могут успешно обработать один холд дважды.
+
+<a id="authentication"></a>
+
+## Авторизация
+
+Регистрация и вход возвращают пару токенов:
+
+- access-токен — JWT HS256 с `sub`, `iat` и `exp`, по умолчанию живёт 15 минут;
+- refresh-токен — случайная opaque-строка, по умолчанию живёт 30 дней.
+
+В базе хранится только SHA-256 хеш refresh-токена. При обновлении старый токен
+отзывается, а новая пара создаётся в той же транзакции. Logout отзывает переданный
+refresh-токен.
+
+<a id="configuration"></a>
+
+## Конфигурация
+
+Конфигурация читается из `.env`, а если файла нет — из окружения. Полный пример
+находится в `.env.example`.
+
+| Переменная               | Значение по умолчанию   | Назначение                    |
+| ------------------------ | ----------------------- | ----------------------------- |
+| `APP_ENV`                | `development`           | Режим логирования             |
+| `APP_PORT`               | `8080`                  | Порт HTTP-сервера             |
+| `APP_BASE_URL`           | `http://localhost:8080` | Базовый URL приложения        |
+| `HOLD_TTL`               | `15m`                   | Время жизни холда             |
+| `JWT_SECRET`             | обязательное            | Ключ подписи access-токенов   |
+| `ACCESS_TOKEN_TTL`       | `15m`                   | Время жизни access-токена     |
+| `REFRESH_TOKEN_TTL`      | `720h`                  | Время жизни refresh-токена    |
+| `REDIS_URL`              | `redis://localhost:6379/0` | Подключение к Redis          |
+| `REDIS_PORT`             | `6379`                  | Порт Redis, опубликованный Compose |
+| `REDIS_DIAL_TIMEOUT`     | `500ms`                 | Таймаут подключения к Redis   |
+| `REDIS_READ_TIMEOUT`     | `500ms`                 | Таймаут чтения из Redis       |
+| `REDIS_WRITE_TIMEOUT`    | `500ms`                 | Таймаут записи в Redis        |
+| `DB_HOST`                | `localhost`             | Хост PostgreSQL               |
+| `DB_PORT`                | `5432`                  | Порт PostgreSQL               |
+| `DB_USER`                | `postgres`              | Пользователь PostgreSQL       |
+| `DB_PASSWORD`            | `postgres`              | Пароль PostgreSQL             |
+| `DB_NAME`                | `billy_db`              | База данных                   |
+| `DB_SSL_MODE`            | `disable`               | Режим TLS                     |
+| `DB_MAX_CONNS`           | `25`                    | Максимум соединений пула      |
+| `DB_MIN_CONNS`           | `10`                    | Минимум соединений пула       |
+| `DB_MAX_CONN_LIFETIME`   | `5m`                    | Максимальная жизнь соединения |
+| `DB_MAX_CONN_IDLE_TIME`  | `30m`                   | Максимальный idle соединения  |
+| `DB_HEALTH_CHECK_PERIOD` | `1m`                    | Период проверки пула          |
+
+Значение `JWT_SECRET=change-me` из примера подходит только для локальной разработки.
+
+<a id="migrations"></a>
 
 ## Миграции
 
-Миграции лежат в `migrations/` и написаны в формате Goose.
-
-Полезные команды:
+SQL-миграции лежат в `migrations/` и применяются внешним Goose CLI:
 
 ```bash
 make migrate-up
@@ -362,165 +291,57 @@ make migrate-down
 make migrate-status
 make migrate-redo
 make migrate-reset
-```
-
-Создание новой миграции:
-
-```bash
 make migrate-create name=add_some_table
 ```
 
-## Примеры запросов
+Команды строят DSN из `DB_*` переменных текущего `.env`.
 
-Во всех примерах предполагается, что API запущен на `http://localhost:8080`.
+<a id="testing"></a>
 
-### Регистрация
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
-```
-
-### Логин
+## Тесты и проверки
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
+make test
+make test-verbose
+make vet
+make lint
 ```
 
-Ответ содержит `access_token` и `refresh_token`. Дальше access-токен подставляется в заголовок `Authorization`, например:
+`make test` запускает `go test ./... -race`, сохраняет coverage profile и печатает
+покрытие по функциям. Unit-тесты проверяют сервисы и HTTP transport; Redis adapter
+тестируется на встроенном `miniredis`, поэтому внешний Redis для тестов не нужен.
+
+Repository integration-тесты требуют отдельный PostgreSQL DSN:
 
 ```bash
-TOKEN=<access_token>
+TEST_POSTGRES_DSN='postgres://postgres:postgres@localhost:5432/billy_test?sslmode=disable' \
+  go test ./internal/repository/postgres/...
 ```
 
-### Обновить токены
+Без `TEST_POSTGRES_DSN` эти тесты пропускаются. Они создают изолированную схему и
+применяют SQL из `migrations/`, не используя рабочие таблицы указанной базы.
 
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d '{"refresh_token":"<refresh_token>"}'
-```
+Конфигурация golangci-lint находится в `.golangci.yml`.
 
-### Создать аккаунт
+<a id="development"></a>
 
-```bash
-curl -X POST http://localhost:8080/api/v1/accounts \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"currency":"USD"}'
-```
+## Команды разработки
 
-### Пополнить аккаунт
+| Команда             | Действие                                   |
+| ------------------- | ------------------------------------------ |
+| `make build`        | Собрать `bin/billy`                        |
+| `make run`          | Запустить API локально                     |
+| `make test`         | Запустить тесты с race detector и coverage |
+| `make lint`         | Запустить golangci-lint                    |
+| `make tidy`         | Выполнить `go mod tidy` и `go mod verify`  |
+| `make docker-up`    | Запустить Compose stack                    |
+| `make docker-down`  | Остановить Compose stack                   |
+| `make docker-build` | Пересобрать Compose images                 |
 
-```bash
-curl -X POST http://localhost:8080/api/v1/accounts/1/topups \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Idempotency-Key: topup-1" \
-  -d '{"amount":10000}'
-```
+<a id="limitations"></a>
 
-### Списать средства
+## Ограничения
 
-```bash
-curl -X POST http://localhost:8080/api/v1/accounts/1/withdrawals \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Idempotency-Key: withdrawal-1" \
-  -d '{"amount":2500}'
-```
-
-### Перевести средства
-
-```bash
-curl -X POST http://localhost:8080/api/v1/transfers \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Idempotency-Key: transfer-1" \
-  -d '{"from_account_id":1,"to_account_id":2,"amount":3000}'
-```
-
-### Создать hold
-
-```bash
-curl -X POST http://localhost:8080/api/v1/holds \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Idempotency-Key: hold-create-1" \
-  -d '{"account_id":1,"amount":1500}'
-```
-
-### Подтвердить hold
-
-```bash
-curl -X POST http://localhost:8080/api/v1/holds/1/confirm \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Idempotency-Key: hold-confirm-1"
-```
-
-### Получить историю операций
-
-```bash
-curl "http://localhost:8080/api/v1/accounts/1/operations?page=1&limit=20" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-## Структура проекта
-
-```text
-.
-+-- cmd/
-|   +-- api/
-|       +-- main.go
-+-- internal/
-|   +-- config/
-|   +-- domain/
-|   |   +-- entity/
-|   |   +-- errors/
-|   +-- pkg/
-|   |   +-- auth/
-|   |   +-- logger/
-|   |   +-- pagination/
-|   |   +-- postgres/
-|   +-- repository/
-|   |   +-- postgres/
-|   +-- service/
-|   +-- transport/
-|   |   +-- http/
-|   +-- worker/
-+-- migrations/
-+-- docker-compose.yml
-+-- Dockerfile
-+-- Makefile
-+-- go.mod
-+-- go.sum
-```
-
-## Что намеренно не реализовано
-
-- Роли пользователей и admin API.
-- Интеграция с платежными провайдерами.
-- Реальные банковские, юридические или compliance-процессы.
-- Распределенные транзакции.
-- Redis/cache layer.
-- Message broker.
-- Prometheus metrics endpoint.
-- Readiness endpoint.
-- OpenAPI/Swagger спецификация.
-- Production deployment.
-
-Эти вещи не добавлены специально: проект сфокусирован на backend-фундаменте, а не на имитации большой fintech-системы.
-
-## Возможные улучшения
-
-- Добавить OpenAPI-спецификацию.
-- Добавить `/ready` с проверкой подключения к PostgreSQL.
-- Добавить `/metrics` и базовые Prometheus-метрики.
-- Добавить роли пользователей (RBAC) и admin API поверх текущей JWT-аутентификации.
-- Добавить outbox-паттерн для событий по денежным операциям.
-- Добавить более подробный audit trail для административных действий.
-- Добавить CI pipeline с линтерами, unit и integration tests.
-- Улучшить документацию по ошибкам API.
+Billy сфокусирован на локальном backend-фундаменте. В проекте нет интеграции с
+платёжным провайдером, ролей и admin API, message broker, OpenAPI, метрик
+Prometheus, readiness endpoint и production deployment-конфигурации.
